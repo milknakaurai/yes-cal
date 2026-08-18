@@ -5,13 +5,16 @@ LINE chatbot นับแคลอรี่สำหรับสองคน (�
 
 ## สถานะตอนนี้
 
-โค้ดเสร็จหมดแล้ว ทดสอบแล้ว **ยังไม่ได้ deploy** — เหลือแค่รัน deploy กับตั้ง LINE webhook
+**Deploy แล้ว** (18 ส.ค. 2026 จากเครื่องเจ้าของ ผ่าน `wrangler login`): https://yes-cal.sales-a5c.workers.dev
+D1 สร้างตารางแล้ว / secrets `GEMINI_API_KEY` + `DASHBOARD_KEY` (=yescal2569) ตั้งแล้ว
 
 | ของที่ต้องใช้ | สถานะ |
 |---|---|
 | Cloudflare API token | ✅ มีแล้ว (ต้องอยู่ใน env `CLOUDFLARE_API_TOKEN`) |
-| Gemini API key | ✅ มีแล้ว ทดสอบยิงจริงผ่าน (ต้องอยู่ใน env `GEMINI_API_KEY`) |
-| LINE Channel secret / access token | ⛔ เจ้าของยังไม่ได้สร้าง Messaging API channel |
+| Gemini API key | ✅ มีแล้ว ทดสอบยิงจริงผ่าน ตั้งเป็น secret แล้ว |
+| LINE Channel secret / access token | ⛔ เจ้าของยังไม่ได้สร้าง Messaging API channel — ชิ้นสุดท้ายที่ค้าง |
+
+เหลือ: สร้าง LINE OA + Messaging API channel → ตั้ง secret 2 ตัว (`LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKEN`) → ตั้ง Webhook URL = `https://yes-cal.sales-a5c.workers.dev/webhook` (ต้องตั้ง secret ก่อนกด Verify) → เชิญบอทเข้ากลุ่ม
 
 ## วิธี deploy
 
