@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
   activity REAL,            -- 1.2 - 1.9
   goal_type TEXT,           -- 'lose' | 'maintain' | 'gain'
   target_kcal INTEGER,
+  target_protein_g INTEGER, -- เป้าโปรตีน/วัน (NULL = คำนวณจากน้ำหนัก×เป้าหมายให้อัตโนมัติ)
   setup_state TEXT,         -- ขั้นตอนที่ค้างอยู่ของ flow ตั้งเป้า (NULL = ไม่ได้อยู่ใน flow)
   setup_draft TEXT,         -- JSON คำตอบสะสมระหว่าง flow
   created_at TEXT DEFAULT (datetime('now'))

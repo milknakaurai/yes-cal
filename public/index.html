@@ -175,7 +175,8 @@ function render() {
       }</div>
       ${target ? `<div class="meter"><div style="width:${pct}%;background:${color}"></div></div>` : ""}
       <div class="macros">
-        <span>โปรตีน <b>${Math.round(u.today.protein_g)}g</b></span>
+        <span>โปรตีน <b>${Math.round(u.today.protein_g)}${u.target_protein_g ? " / " + u.target_protein_g : ""}g</b>${
+          u.target_protein_g && u.today.protein_g >= u.target_protein_g ? " 💪" : ""}</span>
         <span>คาร์บ <b>${Math.round(u.today.carb_g)}g</b></span>
         <span>ไขมัน <b>${Math.round(u.today.fat_g)}g</b></span>
       </div>

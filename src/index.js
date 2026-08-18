@@ -120,6 +120,8 @@ async function handleTextMessage(event, env, userId) {
   if (/^(ตั้งเป้า|ตั้งเป้าหมาย)$/.test(text)) return startSetup(env, event, user);
   if (/^(ช่วยเหลือ|คำสั่ง|help)$/i.test(text)) return lineReply(env, event.replyToken, helpText());
   if (/^เป้าหมาย$/.test(text)) return replyGoal(env, event, user);
+  const proteinGoalMatch = text.match(/^เป้าโปรตีน\s*(\d+)?\s*(?:g|กรัม)?$/i);
+  if (proteinGoalMatch) return setProteinTarget(env, event, user, parseInt(proteinGoalMatch[1] || "0", 10));
   if (/^สรุป$/.test(text)) return replyTodaySummary(env, event);
   if (/^(สัปดาห์|รายสัปดาห์)$/.test(text)) return replyWeekSummary(env, event);
   if (/^(ลบล่าสุด|ลบ)$/.test(text)) return deleteLastMeal(env, event, user);
@@ -152,6 +154,7 @@ function helpText() {
     "  หรือส่งรูปอาหารมาเลย",
     "",
     "🎯 ตั้งเป้า — คำนวณแคลเป้าหมายรายวัน",
+    "💪 เป้าโปรตีน 140 — ตั้งเป้าโปรตีนเอง (ปกติคำนวณให้จากน้ำหนัก)",
     "⚖️ น้ำหนัก 65.5 — บันทึกน้ำหนักวันนี้",
     "📊 สรุป — ยอดวันนี้ของทั้งคู่",
     "📅 สัปดาห์ — ย้อนหลัง 7 วัน",
@@ -236,12 +239,14 @@ function calcTargets(d) {
 
 async function finishSetup(env, event, user, draft) {
   const { bmr, tdee, target } = calcTargets(draft);
+  const perKg = draft.goal_type === "gain" ? 1.8 : draft.goal_type === "lose" ? 1.6 : 1.4;
+  const proteinT = Math.round((draft.weight_kg * perKg) / 5) * 5;
   await env.DB.prepare(
     `UPDATE users SET sex=?, age=?, height_cm=?, weight_kg=?, activity=?, goal_type=?,
-     target_kcal=?, setup_state=NULL, setup_draft=NULL WHERE line_user_id=?`
+     target_kcal=?, target_protein_g=?, setup_state=NULL, setup_draft=NULL WHERE line_user_id=?`
   ).bind(
     draft.sex, draft.age, draft.height_cm, draft.weight_kg, draft.activity,
-    draft.goal_type, target, user.line_user_id
+    draft.goal_type, target, proteinT, user.line_user_id
   ).run();
   await env.DB.prepare(
     "INSERT OR REPLACE INTO weights (line_user_id, weight_kg, logged_date) VALUES (?, ?, ?)"
@@ -256,6 +261,7 @@ async function finishSetup(env, event, user, draft) {
     `เป้าหมาย: ${goalTh}`,
     "",
     `🎯 กินวันละ ${fmtNum(target)} kcal`,
+    `💪 โปรตีนวันละ ${proteinT} g`,
     "",
     "กินอะไรก็พิมพ์บอกได้เลยครับ 🍚",
   ].join("\n"));
@@ -266,9 +272,30 @@ async function replyGoal(env, event, user) {
     return lineReply(env, event.replyToken, `${user.display_name} ยังไม่ได้ตั้งเป้าครับ พิมพ์ "ตั้งเป้า" ก่อนนะ`);
   }
   const goalTh = { lose: "ลดน้ำหนัก", maintain: "รักษาน้ำหนัก", gain: "เพิ่มน้ำหนัก" }[user.goal_type] || "-";
+  const pt = proteinTarget(user);
   return lineReply(env, event.replyToken,
-    `เป้าของ ${user.display_name} 🎯\n${fmtNum(user.target_kcal)} kcal/วัน (${goalTh})\nน้ำหนักล่าสุด ${user.weight_kg} กก.`
+    `เป้าของ ${user.display_name} 🎯\n${fmtNum(user.target_kcal)} kcal/วัน (${goalTh})` +
+    (pt ? `\nโปรตีน ${pt} g/วัน` : "") +
+    `\nน้ำหนักล่าสุด ${user.weight_kg} กก.`
   );
+}
+
+async function setProteinTarget(env, event, user, grams) {
+  if (!grams) {
+    const pt = proteinTarget(user);
+    return lineReply(env, event.replyToken, pt
+      ? `เป้าโปรตีนของ ${user.display_name}: ${pt} g/วัน\n(เปลี่ยนได้ด้วย "เป้าโปรตีน 140")`
+      : `ยังไม่มีเป้าโปรตีนครับ พิมพ์ "ตั้งเป้า" ก่อน หรือตั้งตรง ๆ ด้วย "เป้าโปรตีน 140"`);
+  }
+  if (grams < 20 || grams > 400) {
+    return lineReply(env, event.replyToken, "ขอเป้าโปรตีน 20-400 กรัมครับ เช่น \"เป้าโปรตีน 140\"");
+  }
+  await env.DB.prepare("UPDATE users SET target_protein_g = ? WHERE line_user_id = ?")
+    .bind(grams, user.line_user_id).run();
+  const totals = await getDayTotals(env, user.line_user_id, bkkToday());
+  const p = Math.round(totals.protein_g || 0);
+  return lineReply(env, event.replyToken,
+    `ตั้งเป้าโปรตีนของ ${user.display_name} เป็นวันละ ${grams} g แล้วครับ 💪\nวันนี้ได้แล้ว ${p} g${p < grams ? ` — ขาดอีก ${grams - p} g` : " ครบแล้ว!"}`);
 }
 
 // ---------------------------------------------------------------- food logging
@@ -327,19 +354,35 @@ async function saveMealsAndReply(env, event, user, result, source) {
     `• ${it.name} ≈ ${fmtNum(Math.round(it.kcal || 0))} kcal (P${Math.round(it.protein_g || 0)}/C${Math.round(it.carb_g || 0)}/F${Math.round(it.fat_g || 0)})`
   );
 
-  const lines = ["บันทึกแล้ว 🍽️", ...itemLines, "", statusLine(user, totals.kcal)];
+  const lines = ["บันทึกแล้ว 🍽️", ...itemLines, "", statusLine(user, totals)];
   if (result.note) lines.splice(1, 0, `(${result.note})`);
   return lineReply(env, event.replyToken, lines.join("\n"));
 }
 
-function statusLine(user, kcalToday) {
+function statusLine(user, totals) {
+  const kcalToday = Math.round(totals.kcal || 0);
   if (!user.target_kcal) {
     return `วันนี้ ${user.display_name} กินไป ${fmtNum(kcalToday)} kcal\n(พิมพ์ "ตั้งเป้า" เพื่อให้ผมช่วยดูว่าควรกินวันละเท่าไหร่)`;
   }
   const diff = user.target_kcal - kcalToday;
-  const base = `วันนี้ ${user.display_name}: ${fmtNum(kcalToday)} / ${fmtNum(user.target_kcal)} kcal`;
-  if (diff >= 0) return `${base}\nเหลืออีก ${fmtNum(diff)} kcal`;
-  return `${base}\nเกินเป้า ${fmtNum(-diff)} kcal แล้วนะ 😅`;
+  const lines = [`วันนี้ ${user.display_name}: ${fmtNum(kcalToday)} / ${fmtNum(user.target_kcal)} kcal`];
+  lines.push(diff >= 0 ? `เหลืออีก ${fmtNum(diff)} kcal` : `เกินเป้า ${fmtNum(-diff)} kcal แล้วนะ 😅`);
+
+  const pt = proteinTarget(user);
+  if (pt) {
+    const p = Math.round(totals.protein_g || 0);
+    lines.push(p >= pt ? `โปรตีน ${p}/${pt} g ครบแล้ว 💪` : `โปรตีน ${p}/${pt} g — ขาดอีก ${pt - p} g`);
+  }
+  return lines.join("\n");
+}
+
+// เป้าโปรตีน/วัน: ใช้ค่าที่ตั้งเอง หรือคำนวณจากน้ำหนัก×เป้าหมาย
+// เพิ่มน้ำหนัก/กล้าม 1.8 g/kg · ลดน้ำหนัก 1.6 g/kg (รักษากล้าม) · คงที่ 1.4 g/kg
+function proteinTarget(user) {
+  if (user.target_protein_g) return user.target_protein_g;
+  if (!user.weight_kg || !user.target_kcal) return null;
+  const perKg = user.goal_type === "gain" ? 1.8 : user.goal_type === "lose" ? 1.6 : 1.4;
+  return Math.round((user.weight_kg * perKg) / 5) * 5;
 }
 
 async function deleteLastMeal(env, event, user) {
@@ -352,7 +395,7 @@ async function deleteLastMeal(env, event, user) {
   await env.DB.prepare("DELETE FROM meals WHERE id = ?").bind(last.id).run();
   const totals = await getDayTotals(env, user.line_user_id, bkkToday());
   return lineReply(env, event.replyToken,
-    `ลบ "${last.name}" (${fmtNum(last.kcal)} kcal) แล้วครับ 🗑️\n${statusLine(user, totals.kcal)}`);
+    `ลบ "${last.name}" (${fmtNum(last.kcal)} kcal) แล้วครับ 🗑️\n${statusLine(user, totals)}`);
 }
 
 async function logWeight(env, event, user, weight) {
@@ -394,7 +437,7 @@ async function replyTodaySummary(env, event) {
     const mealLines = meals.length
       ? meals.map((m) => `  • ${m.name} — ${fmtNum(m.kcal)}`).join("\n")
       : "  (ยังไม่มีรายการ)";
-    blocks.push(`${statusLine(u, totals.kcal)}\nP ${Math.round(totals.protein_g)}g / C ${Math.round(totals.carb_g)}g / F ${Math.round(totals.fat_g)}g\n${mealLines}`);
+    blocks.push(`${statusLine(u, totals)}\nคาร์บ ${Math.round(totals.carb_g)}g / ไขมัน ${Math.round(totals.fat_g)}g\n${mealLines}`);
   }
   return lineReply(env, event.replyToken, `สรุปวันนี้ 📊 (${today})\n\n${blocks.join("\n\n")}`);
 }
@@ -407,18 +450,22 @@ async function replyWeekSummary(env, event) {
   const blocks = [];
   for (const u of users) {
     const rows = (await env.DB.prepare(
-      `SELECT eaten_date, SUM(kcal) AS kcal FROM meals
+      `SELECT eaten_date, SUM(kcal) AS kcal, SUM(protein_g) AS protein_g FROM meals
        WHERE line_user_id = ? AND eaten_date >= ? GROUP BY eaten_date`
     ).bind(u.line_user_id, days[0]).all()).results;
-    const byDate = Object.fromEntries(rows.map((r) => [r.eaten_date, r.kcal]));
+    const byDate = Object.fromEntries(rows.map((r) => [r.eaten_date, r]));
     const lines = days.map((d) => {
-      const k = byDate[d] || 0;
+      const k = byDate[d]?.kcal || 0;
       const mark = !u.target_kcal || !k ? "" : k <= u.target_kcal ? " ✅" : " ⚠️";
       return `  ${thaiDow(d)} ${d.slice(8)}/${d.slice(5, 7)}: ${fmtNum(k)}${mark}`;
     });
-    const total = days.reduce((s, d) => s + (byDate[d] || 0), 0);
-    const avg = Math.round(total / 7);
-    blocks.push(`${u.display_name}${u.target_kcal ? ` (เป้า ${fmtNum(u.target_kcal)})` : ""}\n${lines.join("\n")}\n  เฉลี่ย ${fmtNum(avg)} kcal/วัน`);
+    const total = days.reduce((s, d) => s + (byDate[d]?.kcal || 0), 0);
+    const totalP = days.reduce((s, d) => s + (byDate[d]?.protein_g || 0), 0);
+    const pt = proteinTarget(u);
+    blocks.push(
+      `${u.display_name}${u.target_kcal ? ` (เป้า ${fmtNum(u.target_kcal)})` : ""}\n${lines.join("\n")}` +
+      `\n  เฉลี่ย ${fmtNum(total / 7)} kcal · โปรตีน ${Math.round(totalP / 7)} g/วัน${pt ? ` (เป้า ${pt})` : ""}`
+    );
   }
   return lineReply(env, event.replyToken, `7 วันล่าสุด 📅\n\n${blocks.join("\n\n")}\n\nดูกราฟเต็ม ๆ ที่หน้าเว็บได้นะครับ 📈`);
 }
@@ -435,7 +482,7 @@ async function pushNightlySummary(env) {
   const lines = ["สรุปประจำวัน 🌙 (" + today + ")", ""];
   for (const u of users) {
     const totals = await getDayTotals(env, u.line_user_id, today);
-    lines.push(statusLine(u, totals.kcal));
+    lines.push(statusLine(u, totals));
     lines.push("");
   }
   lines.push("ยังกินต่อได้อีกนิดหน่อยก่อนนอนนะครับ 😄");
@@ -658,6 +705,7 @@ async function handleApi(url, request, env) {
         id: u.line_user_id,
         name: u.display_name,
         target_kcal: u.target_kcal,
+        target_protein_g: proteinTarget(u),
         goal_type: u.goal_type,
         today: await getDayTotals(env, u.line_user_id, today),
         meals_today: mealsToday,
