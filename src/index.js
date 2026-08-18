@@ -38,7 +38,7 @@ async function handleWebhook(request, env, ctx) {
   const ok = await verifyLineSignature(
     bodyText,
     request.headers.get("x-line-signature"),
-    env.LINE_CHANNEL_SECRET
+    sec(env, "LINE_CHANNEL_SECRET")
   );
   if (!ok) return new Response("Bad signature", { status: 403 });
 
@@ -278,7 +278,11 @@ async function maybeLogFoodFromText(env, event, user, text) {
   if (text.length > 200) return;
 
   const result = await geminiEstimate(env, [{ text: foodPromptForText(text) }]);
-  if (!result || !result.is_food || !result.items?.length) return; // ไม่ใช่อาหาร → เงียบไว้ ไม่รบกวนแชท
+  if (result === null) {
+    // ต่อ Gemini ไม่ได้ — บอกตรง ๆ ดีกว่าเงียบ
+    return lineReply(env, event.replyToken, "ขอโทษครับ ตอนนี้ต่อระบบประเมินแคลไม่ได้ ลองอีกครั้งนะครับ 🙏");
+  }
+  if (!result.is_food || !result.items?.length) return; // ไม่ใช่อาหาร → เงียบไว้ ไม่รบกวนแชท
 
   return saveMealsAndReply(env, event, user, result, "text");
 }
@@ -287,7 +291,7 @@ async function handleImageMessage(event, env, userId) {
   const user = await getOrCreateUser(env, userId, event.source);
 
   const res = await fetch(`${LINE_DATA_API}/message/${event.message.id}/content`, {
-    headers: { Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` },
+    headers: { Authorization: `Bearer ${sec(env, "LINE_CHANNEL_ACCESS_TOKEN")}` },
   });
   if (!res.ok) throw new Error(`LINE content fetch failed: ${res.status}`);
   const mime = res.headers.get("content-type") || "image/jpeg";
@@ -479,7 +483,8 @@ const FOOD_SCHEMA = {
 };
 
 async function geminiEstimate(env, parts) {
-  if (!env.GEMINI_API_KEY) {
+  const apiKey = sec(env, "GEMINI_API_KEY");
+  if (!apiKey) {
     console.error("GEMINI_API_KEY not set");
     return null;
   }
@@ -488,7 +493,7 @@ async function geminiEstimate(env, parts) {
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({
         contents: [{ parts }],
         generationConfig: {
@@ -520,7 +525,7 @@ async function lineReply(env, replyToken, text) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
+      Authorization: `Bearer ${sec(env, "LINE_CHANNEL_ACCESS_TOKEN")}`,
     },
     body: JSON.stringify({ replyToken, messages: [{ type: "text", text: text.slice(0, 4900) }] }),
   });
@@ -532,7 +537,7 @@ async function linePush(env, to, text) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
+      Authorization: `Bearer ${sec(env, "LINE_CHANNEL_ACCESS_TOKEN")}`,
     },
     body: JSON.stringify({ to, messages: [{ type: "text", text: text.slice(0, 4900) }] }),
   });
@@ -546,7 +551,7 @@ async function fetchDisplayName(env, source) {
   if (source.type === "room") url = `${LINE_API}/room/${source.roomId}/member/${userId}`;
   try {
     const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` },
+      headers: { Authorization: `Bearer ${sec(env, "LINE_CHANNEL_ACCESS_TOKEN")}` },
     });
     if (res.ok) return (await res.json()).displayName;
   } catch {}
@@ -584,11 +589,45 @@ async function getDayTotals(env, userId, date) {
 
 async function handleApi(url, request, env) {
   // กันคนนอกเปิดดู: ถ้าตั้ง DASHBOARD_KEY ไว้ ต้องแนบ ?key= ให้ตรง
-  if (env.DASHBOARD_KEY) {
-    const key = url.searchParams.get("key") || request.headers.get("x-dashboard-key");
-    if (key !== env.DASHBOARD_KEY) {
+  const dashKey = sec(env, "DASHBOARD_KEY");
+  if (dashKey) {
+    const key = (url.searchParams.get("key") || request.headers.get("x-dashboard-key") || "").trim();
+    if (key !== dashKey) {
       return jsonResponse({ error: "unauthorized" }, 401);
     }
+  }
+
+  // หน้าตรวจสุขภาพระบบ: เช็คว่า secret ครบไหม + ยิงทดสอบ Gemini กับ LINE จริง
+  if (url.pathname === "/api/health") {
+    const report = {};
+    for (const name of ["LINE_CHANNEL_SECRET", "LINE_CHANNEL_ACCESS_TOKEN", "GEMINI_API_KEY", "DASHBOARD_KEY"]) {
+      const raw = env[name] || "";
+      report[name] = { set: raw.length > 0, length: raw.length, stray_whitespace: raw !== raw.trim() };
+    }
+    try {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL || "gemini-2.5-flash"}:generateContent`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": sec(env, "GEMINI_API_KEY") },
+          body: JSON.stringify({ contents: [{ parts: [{ text: "ตอบสั้น ๆ คำเดียวว่า: โอเค" }] }] }),
+        }
+      );
+      report.gemini_status = r.status;
+      if (!r.ok) report.gemini_error = (await r.text()).slice(0, 300);
+    } catch (e) {
+      report.gemini_status = "fetch_error: " + e.message;
+    }
+    try {
+      const r = await fetch(`${LINE_API}/info`, {
+        headers: { Authorization: `Bearer ${sec(env, "LINE_CHANNEL_ACCESS_TOKEN")}` },
+      });
+      report.line_status = r.status;
+      if (!r.ok) report.line_error = (await r.text()).slice(0, 300);
+    } catch (e) {
+      report.line_status = "fetch_error: " + e.message;
+    }
+    return jsonResponse(report);
   }
 
   if (url.pathname === "/api/overview") {
@@ -640,6 +679,11 @@ function jsonResponse(obj, status = 200) {
 }
 
 // ---------------------------------------------------------------- utils
+
+// อ่านค่า secret แบบกันอักขระท้ายบรรทัดติดมา (เช่นตั้งผ่าน echo บน Windows จะแถม \r)
+function sec(env, name) {
+  return (env[name] || "").trim();
+}
 
 // เวลาไทย UTC+7 (ไม่มี DST)
 function bkkToday() {
