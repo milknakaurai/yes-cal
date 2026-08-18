@@ -1,0 +1,5 @@
+# คัดลอกเป็น .dev.vars สำหรับรัน wrangler dev ในเครื่อง (อย่า commit .dev.vars)
+LINE_CHANNEL_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+LINE_CHANNEL_ACCESS_TOKEN=xxxxxxxxxxxxxxxxxxxx
+GEMINI_API_KEY=AIzaXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+DASHBOARD_KEY=mysecret

@@ -1,0 +1,17 @@
+{
+  "name": "yes-cal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "LINE chatbot นับแคลอรี่สำหรับสองคน — Cloudflare Worker + D1 + Gemini",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create yes-cal",
+    "db:migrate": "wrangler d1 execute yes-cal --remote --file=schema.sql",
+    "db:migrate:local": "wrangler d1 execute yes-cal --local --file=schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

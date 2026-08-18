@@ -1,0 +1,26 @@
+# Yes Cal — LINE calorie tracker bot (Cloudflare Worker + D1 + static dashboard)
+name = "yes-cal"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+# dashboard (หน้าเว็บสถิติ) เสิร์ฟจากโฟลเดอร์ public/
+[assets]
+directory = "public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "yes-cal"
+database_id = "REPLACE_AFTER_D1_CREATE"   # ได้จาก: npx wrangler d1 create yes-cal
+
+# push สรุปประจำวัน 21:00 เวลาไทย (= 14:00 UTC)
+[triggers]
+crons = ["0 14 * * *"]
+
+[vars]
+GEMINI_MODEL = "gemini-2.5-flash"
+
+# Secrets (ตั้งด้วย: npx wrangler secret put <NAME>)
+#   LINE_CHANNEL_SECRET        - จาก LINE Developers > Messaging API channel > Basic settings
+#   LINE_CHANNEL_ACCESS_TOKEN  - จาก Messaging API tab > Channel access token (long-lived)
+#   GEMINI_API_KEY             - จาก https://aistudio.google.com/apikey
+#   DASHBOARD_KEY              - รหัสอะไรก็ได้ ไว้กันคนอื่นเปิดหน้า dashboard (ไม่ตั้ง = เปิดได้ทุกคน)
