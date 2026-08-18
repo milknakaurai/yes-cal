@@ -512,16 +512,40 @@ async function pushNightlySummary(env) {
 
 // ---------------------------------------------------------------- Gemini
 
+// ค่าอ้างอิงอาหารไทยที่เจอบ่อย ช่วยให้ตัวเลขนิ่งไม่แกว่งไปคนละทาง
+const NUTRITION_HINTS = `ยึดค่าอ้างอิงมาตรฐานอาหารไทย เช่น:
+- ไข่ต้ม/ไข่ดาว 1 ฟอง: 77/110 kcal (P6 F5-9)
+- ข้าวสวย 1 ทัพพี: 80 kcal (C18) · ข้าวเหนียว 1 ห่อเล็ก: 220 kcal
+- ข้าวมันไก่ 1 จาน: 600 kcal · กะเพราหมูสับราดข้าว: 550 kcal (+ไข่ดาว +110)
+- ก๋วยเตี๋ยวน้ำ 1 ชาม: 350-450 kcal · ส้มตำไทย: 120 kcal
+- ชาไทยเย็น/กาแฟเย็น 1 แก้ว: 200-300 kcal · น้ำเปล่า/ชาไม่หวาน: 0
+- อกไก่ 100g: 165 kcal (P31) · หมูสามชั้นทอด 100g: 470 kcal
+- นมจืด 1 กล่อง (225ml): 150 kcal (P8) · เวย์โปรตีน 1 สกู๊ป: 120 kcal (P24)
+ตัวเลขต้องสอดคล้องกัน: kcal ≈ 4×protein_g + 4×carb_g + 9×fat_g`;
+
 function foodPromptForText(text) {
   return `คุณเป็นนักโภชนาการผู้เชี่ยวชาญอาหารไทย ผู้ใช้พิมพ์ข้อความในแชท: "${text}"
 
-ถ้าข้อความนี้เป็นการบอกว่ากิน/ดื่มอะไร ให้ประเมินแคลอรี่และสารอาหารของทุกรายการ โดยใช้ขนาดเสิร์ฟไทยทั่วไปถ้าไม่ระบุปริมาณ ถ้าระบุจำนวน (เช่น 2 จาน) ให้คูณตาม
+ถ้าข้อความนี้เป็นการบอกว่ากิน/ดื่มอะไร ให้ประเมินแคลอรี่และสารอาหาร (protein_g, carb_g, fat_g) ของทุกรายการ โดยใช้ขนาดเสิร์ฟไทยทั่วไปถ้าไม่ระบุปริมาณ ถ้าระบุจำนวน (เช่น 2 จาน, 2 ฟอง) ให้คูณตามจำนวน
+${NUTRITION_HINTS}
 ถ้าเป็นแค่บทสนทนาทั่วไป คำถาม หรือไม่เกี่ยวกับการกินอาหาร ให้ is_food = false`;
 }
 
 function foodPromptForImage() {
-  return `คุณเป็นนักโภชนาการผู้เชี่ยวชาญอาหารไทย ดูรูปนี้แล้วประเมินว่าเป็นอาหาร/เครื่องดื่มอะไร ปริมาณเท่าไหร่ และประเมินแคลอรี่กับสารอาหารของแต่ละรายการที่เห็น
+  return `คุณเป็นนักโภชนาการผู้เชี่ยวชาญอาหารไทย ดูรูปนี้แล้วประเมินว่าเป็นอาหาร/เครื่องดื่มอะไร ปริมาณเท่าไหร่ และประเมินแคลอรี่กับสารอาหาร (protein_g, carb_g, fat_g) ของแต่ละรายการที่เห็น
+${NUTRITION_HINTS}
 ถ้าไม่แน่ใจชนิดอาหาร ให้เดาที่ใกล้เคียงที่สุดและบอกไว้ใน note ถ้ารูปไม่ใช่อาหารเลย ให้ is_food = false`;
+}
+
+// กันตัวเลขเพี้ยน: ถ้า kcal ขัดกับสูตร 4-4-9 เกิน 35% ให้เชื่อฝั่ง macro แทน
+function reconcileItem(it) {
+  const p = +it.protein_g || 0, c = +it.carb_g || 0, f = +it.fat_g || 0;
+  const macroKcal = 4 * p + 4 * c + 9 * f;
+  if (macroKcal > 40 && it.kcal > 0) {
+    const ratio = it.kcal / macroKcal;
+    if (ratio > 1.35 || ratio < 0.65) it.kcal = Math.round(macroKcal);
+  }
+  return it;
 }
 
 const FOOD_SCHEMA = {
@@ -577,7 +601,9 @@ async function geminiEstimate(env, parts) {
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) return null;
   try {
-    return JSON.parse(text);
+    const result = JSON.parse(text);
+    if (Array.isArray(result.items)) result.items = result.items.map(reconcileItem);
+    return result;
   } catch {
     return null;
   }
