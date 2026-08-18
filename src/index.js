@@ -137,6 +137,7 @@ async function handleTextMessage(event, env, userId) {
   if (/^สรุป$/.test(text)) return replyTodaySummary(env, event);
   if (/^(สัปดาห์|รายสัปดาห์)$/.test(text)) return replyWeekSummary(env, event);
   if (/^(ลบล่าสุด|ลบ)$/.test(text)) return deleteLastMeal(env, event, user);
+  if (/^(ล้างวันนี้|รีเซ็ตวันนี้|เริ่มใหม่วันนี้|ล้าง|รีเซ็ต|reset)$/i.test(text)) return clearToday(env, event, user);
 
   const weightMatch = text.match(/^(?:น้ำหนัก|นน\.?)\s*([\d.]+)\s*(?:กก|kg)?\.?$/i);
   if (weightMatch) return logWeight(env, event, user, parseFloat(weightMatch[1]));
@@ -171,6 +172,7 @@ function helpText() {
     "📊 สรุป — ยอดวันนี้ของทั้งคู่",
     "📅 สัปดาห์ — ย้อนหลัง 7 วัน",
     "🗑️ ลบล่าสุด — ลบรายการอาหารล่าสุดของวันนี้",
+    "🧹 ล้างวันนี้ — ลบรายการอาหารวันนี้ทั้งหมด (เฉพาะของตัวเอง)",
     "🎯 เป้าหมาย — ดูเป้าที่ตั้งไว้",
     "",
     "ทุกวัน 21:00 ผมจะสรุปให้อัตโนมัติครับ 🌙",
@@ -414,6 +416,20 @@ async function deleteLastMeal(env, event, user) {
   const totals = await getDayTotals(env, user.line_user_id, bkkToday());
   return lineReply(env, event.replyToken,
     `ลบ "${last.name}" (${fmtNum(last.kcal)} kcal) แล้วครับ 🗑️\n${statusLine(user, totals)}`);
+}
+
+async function clearToday(env, event, user) {
+  const today = bkkToday();
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS n, COALESCE(SUM(kcal),0) AS kcal FROM meals WHERE line_user_id = ? AND eaten_date = ?"
+  ).bind(user.line_user_id, today).first();
+  if (!row.n) {
+    return lineReply(env, event.replyToken, `วันนี้ ${user.display_name} ยังไม่มีรายการอยู่แล้วครับ เริ่มบันทึกได้เลย`);
+  }
+  await env.DB.prepare("DELETE FROM meals WHERE line_user_id = ? AND eaten_date = ?")
+    .bind(user.line_user_id, today).run();
+  return lineReply(env, event.replyToken,
+    `ล้างรายการวันนี้ของ ${user.display_name} แล้วครับ 🧹\n(ลบไป ${row.n} รายการ รวม ${fmtNum(row.kcal)} kcal)\nเริ่มนับใหม่ได้เลย`);
 }
 
 async function logWeight(env, event, user, weight) {
