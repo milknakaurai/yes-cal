@@ -10,7 +10,7 @@ directory = "public"
 [[d1_databases]]
 binding = "DB"
 database_name = "yes-cal"
-database_id = "REPLACE_AFTER_D1_CREATE"   # ได้จาก: npx wrangler d1 create yes-cal
+database_id = "5d804c8a-a4ed-4a12-a2cc-93df2b3d5953"
 
 # push สรุปประจำวัน 21:00 เวลาไทย (= 14:00 UTC)
 [triggers]
