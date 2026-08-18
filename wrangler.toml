@@ -17,7 +17,10 @@ database_id = "5d804c8a-a4ed-4a12-a2cc-93df2b3d5953"
 crons = ["0 14 * * *"]
 
 [vars]
-GEMINI_MODEL = "gemini-2.5-flash"
+# free tier จำกัดโควตาต่อรุ่นต่อวัน (2.5-flash = 20 ครั้ง/วัน) — flash-lite โควตาสูงกว่ามาก
+# ถ้ารุ่นหลักเต็ม บอทจะสลับไปรุ่นสำรองให้เองอัตโนมัติ
+GEMINI_MODEL = "gemini-3.5-flash-lite"
+GEMINI_FALLBACK_MODEL = "gemini-2.5-flash"
 
 # Secrets (ตั้งด้วย: npx wrangler secret put <NAME>)
 #   LINE_CHANNEL_SECRET        - จาก LINE Developers > Messaging API channel > Basic settings

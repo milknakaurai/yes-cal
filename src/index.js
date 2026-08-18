@@ -1,6 +1,8 @@
 // Yes Cal — LINE calorie tracker bot for two people
 // Cloudflare Worker: LINE webhook + Gemini calorie estimation + D1 + dashboard API + nightly cron
 
+import { NUTRITION_HINTS } from "./food-reference.js";
+
 const LINE_API = "https://api.line.me/v2/bot";
 const LINE_DATA_API = "https://api-data.line.me/v2/bot";
 
@@ -326,6 +328,7 @@ async function maybeLogFoodFromText(env, event, user, text) {
   if (text.length > 200) return;
 
   const result = await geminiEstimate(env, [{ text: foodPromptForText(text) }]);
+  if (result?.__quota) return lineReply(env, event.replyToken, quotaText());
   if (result === null) {
     // ต่อ Gemini ไม่ได้ — บอกตรง ๆ ดีกว่าเงียบ
     return lineReply(env, event.replyToken, "ขอโทษครับ ตอนนี้ต่อระบบประเมินแคลไม่ได้ ลองอีกครั้งนะครับ 🙏");
@@ -350,6 +353,7 @@ async function handleImageMessage(event, env, userId) {
     { text: foodPromptForImage() },
   ]);
 
+  if (result?.__quota) return lineReply(env, event.replyToken, quotaText());
   if (!result || !result.is_food || !result.items?.length) {
     return lineReply(env, event.replyToken,
       `ดูจากรูปแล้วไม่แน่ใจว่าเป็นอาหารครับ 🤔 ${result?.note ? "(" + result.note + ")" : ""}\nลองพิมพ์ชื่อเมนูบอกผมแทนได้นะ`);
@@ -528,16 +532,14 @@ async function pushNightlySummary(env) {
 
 // ---------------------------------------------------------------- Gemini
 
-// ค่าอ้างอิงอาหารไทยที่เจอบ่อย ช่วยให้ตัวเลขนิ่งไม่แกว่งไปคนละทาง
-const NUTRITION_HINTS = `ยึดค่าอ้างอิงมาตรฐานอาหารไทย เช่น:
-- ไข่ต้ม/ไข่ดาว 1 ฟอง: 77/110 kcal (P6 F5-9)
-- ข้าวสวย 1 ทัพพี: 80 kcal (C18) · ข้าวเหนียว 1 ห่อเล็ก: 220 kcal
-- ข้าวมันไก่ 1 จาน: 600 kcal · กะเพราหมูสับราดข้าว: 550 kcal (+ไข่ดาว +110)
-- ก๋วยเตี๋ยวน้ำ 1 ชาม: 350-450 kcal · ส้มตำไทย: 120 kcal
-- ชาไทยเย็น/กาแฟเย็น 1 แก้ว: 200-300 kcal · น้ำเปล่า/ชาไม่หวาน: 0
-- อกไก่ 100g: 165 kcal (P31) · หมูสามชั้นทอด 100g: 470 kcal
-- นมจืด 1 กล่อง (225ml): 150 kcal (P8) · เวย์โปรตีน 1 สกู๊ป: 120 kcal (P24)
-ตัวเลขต้องสอดคล้องกัน: kcal ≈ 4×protein_g + 4×carb_g + 9×fat_g`;
+function quotaText() {
+  return [
+    "โควตา AI ประเมินแคลของวันนี้หมดแล้วครับ 😅",
+    "พรุ่งนี้เริ่มนับใหม่อัตโนมัติ",
+    "",
+    "ระหว่างนี้ยังใช้คำสั่งอื่นได้ปกติ (สรุป / สัปดาห์ / น้ำหนัก / เป้าหมาย)",
+  ].join("\n");
+}
 
 function foodPromptForText(text) {
   return `คุณเป็นนักโภชนาการผู้เชี่ยวชาญอาหารไทย ผู้ใช้พิมพ์ข้อความในแชท: "${text}"
@@ -587,42 +589,60 @@ const FOOD_SCHEMA = {
   required: ["is_food"],
 };
 
+// คืนค่า: ผลลัพธ์ | { __quota: true } เมื่อโควตาหมดทุกรุ่น | null เมื่อพังด้วยเหตุอื่น
 async function geminiEstimate(env, parts) {
   const apiKey = sec(env, "GEMINI_API_KEY");
   if (!apiKey) {
     console.error("GEMINI_API_KEY not set");
     return null;
   }
-  const model = env.GEMINI_MODEL || "gemini-2.5-flash";
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: {
-          response_mime_type: "application/json",
-          response_schema: FOOD_SCHEMA,
-          temperature: 0.2,
-        },
-      }),
+  // free tier จำกัดโควตาต่อรุ่นต่อวัน — รุ่นหลักเต็มก็สลับไปรุ่นสำรองอัตโนมัติ
+  const models = [
+    sec(env, "GEMINI_MODEL") || "gemini-3.5-flash-lite",
+    sec(env, "GEMINI_FALLBACK_MODEL") || "gemini-2.5-flash",
+  ];
+  let quotaHit = false;
+
+  for (const model of models) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: {
+            response_mime_type: "application/json",
+            response_schema: FOOD_SCHEMA,
+            temperature: 0.2,
+          },
+        }),
+      }
+    );
+
+    if (res.ok) {
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) {
+        console.error("gemini empty candidate", model, JSON.stringify(data).slice(0, 300));
+        continue;
+      }
+      try {
+        const result = JSON.parse(text);
+        if (Array.isArray(result.items)) result.items = result.items.map(reconcileItem);
+        return result;
+      } catch {
+        console.error("gemini bad json", model, text.slice(0, 200));
+        continue;
+      }
     }
-  );
-  if (!res.ok) {
-    console.error("gemini error", res.status, await res.text());
-    return null;
+
+    console.error("gemini error", model, res.status, (await res.text()).slice(0, 300));
+    if (res.status === 429) { quotaHit = true; continue; }  // โควตาเต็ม → ลองรุ่นถัดไป
+    if (res.status >= 500) continue;                        // ฝั่ง Google ล่ม → ลองรุ่นถัดไป
+    break;                                                  // 400/403 = ตั้งค่าผิด ลองรุ่นอื่นก็ไม่ช่วย
   }
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) return null;
-  try {
-    const result = JSON.parse(text);
-    if (Array.isArray(result.items)) result.items = result.items.map(reconcileItem);
-    return result;
-  } catch {
-    return null;
-  }
+  return quotaHit ? { __quota: true } : null;
 }
 
 // ---------------------------------------------------------------- LINE helpers
@@ -713,7 +733,7 @@ async function handleApi(url, request, env) {
     }
     try {
       const r = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL || "gemini-2.5-flash"}:generateContent`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${sec(env, "GEMINI_MODEL") || "gemini-3.5-flash-lite"}:generateContent`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-goog-api-key": sec(env, "GEMINI_API_KEY") },
