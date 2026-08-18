@@ -4,6 +4,18 @@
 const LINE_API = "https://api.line.me/v2/bot";
 const LINE_DATA_API = "https://api-data.line.me/v2/bot";
 
+// เป้าหมาย 4 แบบ: ปรับแคลจาก TDEE + เป้าโปรตีนต่อน้ำหนักตัว (ค่ากลางของช่วงแนะนำ)
+const GOALS = {
+  health:   { label: "สุขภาพทั่วไป",        kcalAdjust: 0,    proteinPerKg: 0.9 }, // 0.8-1.0
+  tone:     { label: "กระชับสัดส่วน/เฟิร์ม", kcalAdjust: 0,    proteinPerKg: 1.4 }, // 1.2-1.6
+  muscle:   { label: "สร้างกล้ามเนื้อ",      kcalAdjust: 400,  proteinPerKg: 1.9 }, // 1.6-2.2
+  fatloss:  { label: "ลดไขมัน/ลีนหุ่น",      kcalAdjust: -500, proteinPerKg: 2.0 }, // 1.8-2.2
+  // ค่าเก่าจากเวอร์ชันแรก (คนที่ตั้งเป้าไว้ก่อนหน้ายังใช้ต่อได้)
+  gain:     { label: "เพิ่มน้ำหนัก",         kcalAdjust: 400,  proteinPerKg: 1.8 },
+  lose:     { label: "ลดน้ำหนัก",            kcalAdjust: -500, proteinPerKg: 1.6 },
+  maintain: { label: "รักษาน้ำหนัก",         kcalAdjust: 0,    proteinPerKg: 1.4 },
+};
+
 const ACTIVITY_LEVELS = [
   { n: 1, factor: 1.2, label: "นั่งทำงาน แทบไม่ออกกำลังกาย" },
   { n: 2, factor: 1.375, label: "ออกกำลังกายเบา ๆ 1-3 วัน/สัปดาห์" },
@@ -213,12 +225,19 @@ async function continueSetup(env, event, user, text) {
     if (!lvl) return lineReply(env, event.replyToken, "ตอบเป็นตัวเลข 1-5 ครับ");
     draft.activity = lvl.factor;
     nextState = "goal";
-    reply = "ข้อสุดท้าย: เป้าหมายคืออะไรครับ?\n1. ลดน้ำหนัก\n2. รักษาน้ำหนัก\n3. เพิ่มน้ำหนัก\n(ตอบ 1-3 หรือพิมพ์ ลด/คงที่/เพิ่ม)";
+    reply = [
+      "ข้อสุดท้าย: เป้าหมายคืออะไรครับ? (ตอบ 1-4)",
+      "1. สุขภาพทั่วไป — รักษาน้ำหนัก กินให้พอดี",
+      "2. กระชับสัดส่วน/เฟิร์ม — ออกกำลังกายสม่ำเสมอ อยากให้ตัวไม่เหลว",
+      "3. สร้างกล้ามเนื้อ — เล่นเวท อยากเพิ่มมวลกล้าม",
+      "4. ลดไขมัน/ลีนหุ่น — คุมแคล ลดไขมันโดยไม่ให้กล้ามหาย",
+    ].join("\n");
   } else if (state === "goal") {
-    if (/^1|ลด/.test(text)) draft.goal_type = "lose";
-    else if (/^2|คง|รักษา/.test(text)) draft.goal_type = "maintain";
-    else if (/^3|เพิ่ม/.test(text)) draft.goal_type = "gain";
-    else return lineReply(env, event.replyToken, "ตอบ 1, 2 หรือ 3 ครับ");
+    if (/^1|สุขภาพ/.test(text)) draft.goal_type = "health";
+    else if (/^2|กระชับ|เฟิร์ม|โทน/.test(text)) draft.goal_type = "tone";
+    else if (/^3|กล้าม|เวท|เพิ่ม/.test(text)) draft.goal_type = "muscle";
+    else if (/^4|ลด|ลีน|ไขมัน/.test(text)) draft.goal_type = "fatloss";
+    else return lineReply(env, event.replyToken, "ตอบ 1, 2, 3 หรือ 4 ครับ");
     return finishSetup(env, event, user, draft);
   }
 
@@ -233,14 +252,14 @@ function calcTargets(d) {
   const bmr =
     10 * d.weight_kg + 6.25 * d.height_cm - 5 * d.age + (d.sex === "male" ? 5 : -161);
   const tdee = bmr * d.activity;
-  const adjust = d.goal_type === "lose" ? -500 : d.goal_type === "gain" ? 400 : 0;
+  const adjust = GOALS[d.goal_type]?.kcalAdjust ?? 0;
   return { bmr: Math.round(bmr), tdee: Math.round(tdee), target: Math.round(tdee + adjust) };
 }
 
 async function finishSetup(env, event, user, draft) {
   const { bmr, tdee, target } = calcTargets(draft);
-  const perKg = draft.goal_type === "gain" ? 1.8 : draft.goal_type === "lose" ? 1.6 : 1.4;
-  const proteinT = Math.round((draft.weight_kg * perKg) / 5) * 5;
+  const goal = GOALS[draft.goal_type];
+  const proteinT = Math.round((draft.weight_kg * goal.proteinPerKg) / 5) * 5;
   await env.DB.prepare(
     `UPDATE users SET sex=?, age=?, height_cm=?, weight_kg=?, activity=?, goal_type=?,
      target_kcal=?, target_protein_g=?, setup_state=NULL, setup_draft=NULL WHERE line_user_id=?`
@@ -252,16 +271,16 @@ async function finishSetup(env, event, user, draft) {
     "INSERT OR REPLACE INTO weights (line_user_id, weight_kg, logged_date) VALUES (?, ?, ?)"
   ).bind(user.line_user_id, draft.weight_kg, bkkToday()).run();
 
-  const goalTh = { lose: "ลดน้ำหนัก (−500 kcal/วัน)", maintain: "รักษาน้ำหนัก", gain: "เพิ่มน้ำหนัก (+400 kcal/วัน)" }[draft.goal_type];
+  const adjustTh = goal.kcalAdjust ? ` (${goal.kcalAdjust > 0 ? "+" : "−"}${Math.abs(goal.kcalAdjust)} kcal/วัน)` : "";
   return lineReply(env, event.replyToken, [
     `ตั้งเป้าเสร็จแล้วครับ ${user.display_name} ✅`,
     "",
     `BMR: ${fmtNum(bmr)} kcal`,
     `TDEE: ${fmtNum(tdee)} kcal`,
-    `เป้าหมาย: ${goalTh}`,
+    `เป้าหมาย: ${goal.label}${adjustTh}`,
     "",
     `🎯 กินวันละ ${fmtNum(target)} kcal`,
-    `💪 โปรตีนวันละ ${proteinT} g`,
+    `💪 โปรตีนวันละ ${proteinT} g (${goal.proteinPerKg} g/กก.)`,
     "",
     "กินอะไรก็พิมพ์บอกได้เลยครับ 🍚",
   ].join("\n"));
@@ -271,7 +290,7 @@ async function replyGoal(env, event, user) {
   if (!user.target_kcal) {
     return lineReply(env, event.replyToken, `${user.display_name} ยังไม่ได้ตั้งเป้าครับ พิมพ์ "ตั้งเป้า" ก่อนนะ`);
   }
-  const goalTh = { lose: "ลดน้ำหนัก", maintain: "รักษาน้ำหนัก", gain: "เพิ่มน้ำหนัก" }[user.goal_type] || "-";
+  const goalTh = GOALS[user.goal_type]?.label || "-";
   const pt = proteinTarget(user);
   return lineReply(env, event.replyToken,
     `เป้าของ ${user.display_name} 🎯\n${fmtNum(user.target_kcal)} kcal/วัน (${goalTh})` +
@@ -376,12 +395,11 @@ function statusLine(user, totals) {
   return lines.join("\n");
 }
 
-// เป้าโปรตีน/วัน: ใช้ค่าที่ตั้งเอง หรือคำนวณจากน้ำหนัก×เป้าหมาย
-// เพิ่มน้ำหนัก/กล้าม 1.8 g/kg · ลดน้ำหนัก 1.6 g/kg (รักษากล้าม) · คงที่ 1.4 g/kg
+// เป้าโปรตีน/วัน: ใช้ค่าที่ตั้งเอง หรือคำนวณจากน้ำหนัก × อัตราของเป้าหมาย (ดูตาราง GOALS)
 function proteinTarget(user) {
   if (user.target_protein_g) return user.target_protein_g;
   if (!user.weight_kg || !user.target_kcal) return null;
-  const perKg = user.goal_type === "gain" ? 1.8 : user.goal_type === "lose" ? 1.6 : 1.4;
+  const perKg = GOALS[user.goal_type]?.proteinPerKg ?? 1.4;
   return Math.round((user.weight_kg * perKg) / 5) * 5;
 }
 

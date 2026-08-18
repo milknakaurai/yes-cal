@@ -159,7 +159,10 @@ function render() {
     const target = u.target_kcal;
     const pct = target ? Math.min(100, (kcal / target) * 100) : 0;
     const over = target && kcal > target;
-    const goalTh = { lose: "ลดน้ำหนัก", maintain: "รักษาน้ำหนัก", gain: "เพิ่มน้ำหนัก" }[u.goal_type] || "";
+    const goalTh = {
+      health: "สุขภาพทั่วไป", tone: "กระชับสัดส่วน", muscle: "สร้างกล้ามเนื้อ", fatloss: "ลดไขมัน/ลีน",
+      lose: "ลดน้ำหนัก", maintain: "รักษาน้ำหนัก", gain: "เพิ่มน้ำหนัก",
+    }[u.goal_type] || "";
     html += `
     <div class="card">
       <div class="person-head">
