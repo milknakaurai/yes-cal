@@ -95,3 +95,20 @@ npm run deploy
 อยากให้เมนูไหนแม่นขึ้น เพิ่มบรรทัดในไฟล์นี้แล้ว `npx wrangler deploy` ได้เลย
 
 > ⚠️ ตัวเลขแคลจาก AI เป็นการประเมินคร่าว ๆ (คลาดเคลื่อน 20–30% โดยเฉพาะอาหารไทยที่น้ำมัน/กะทิไม่แน่นอน) ใช้ดูเทรนด์ได้ดี ไม่ใช่คำแนะนำทางการแพทย์
+
+## แก้ปัญหา
+
+**บอทเงียบ ไม่ตอบอะไรเลย** — เช็คก่อนว่า secret ครบไหม เปิด:
+`https://yes-cal.<subdomain>.workers.dev/api/health?key=<DASHBOARD_KEY>`
+
+- `LINE_CHANNEL_SECRET: set false` → บอทตรวจลายเซ็นไม่ผ่าน ปฏิเสธทุกข้อความ (อาการ: เงียบสนิท)
+- `line_status: 401` → access token หาย/หมดอายุ บอทอ่านข้อความได้แต่ตอบกลับไม่ได้
+- `gemini_status: 429` → โควตาวันนี้หมด (บอทจะบอกเองในแชท)
+
+**secret หายหลัง deploy** — เกิดขึ้นได้ ให้ตั้งใหม่ทั้งชุด (ค่าจริงอยู่ที่ LINE Developers Console):
+
+```cmd
+(echo <CHANNEL_SECRET>| npx wrangler secret put LINE_CHANNEL_SECRET) && (echo <ACCESS_TOKEN>| npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN) && (echo <GEMINI_KEY>| npx wrangler secret put GEMINI_API_KEY) && (echo <DASHBOARD_KEY>| npx wrangler secret put DASHBOARD_KEY)
+```
+
+แล้วเปิด `/api/health` ยืนยันว่าขึ้น `set: true` ครบทั้ง 4 ตัว **ทำทุกครั้งหลัง deploy**
