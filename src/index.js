@@ -175,6 +175,7 @@ function greetingText() {
     "",
     "จากนั้นกินอะไรก็พิมพ์บอกได้เลย เช่น \"ข้าวมันไก่ 1 จาน\" หรือส่งรูปอาหารมาก็ได้ 📸",
     "",
+    "💪 ถ้าเป็นกลุ่มชาเลนจ์ออกกำลังกาย พิมพ์ \"โหมดชาเลนจ์\" เพื่อสลับโหมด",
     "พิมพ์ \"คำสั่ง\" เพื่อดูวิธีใช้ทั้งหมด",
   ].join("\n");
 }
@@ -943,12 +944,20 @@ async function handleChallengeText(env, event, chatId, userId, text) {
     await env.DB.prepare("UPDATE chat_targets SET mode = 'calorie' WHERE id = ?").bind(chatId).run();
     return lineReply(env, event.replyToken, "สลับกลับเป็นโหมดนับแคลอรี่แล้วครับ 🍚");
   }
-  if (text.length > 120) return;
+  // กลุ่มใหญ่คุยกันเยอะ — กรองด้วยคำก่อน ไม่งั้นเปลืองโควตา Gemini และตอบมั่ว
+  if (text.length > 120 || !looksLikeWorkout(text)) return;
 
   const result = await geminiWorkout(env, [{ text: workoutTextPrompt(text) }]);
   if (result?.__quota) return lineReply(env, event.replyToken, quotaText());
   if (!result?.is_workout) return; // คุยเล่นทั่วไป → เงียบไว้
   return saveWorkoutAndReply(env, event, chatId, userId, result, "text");
+}
+
+// คำที่บ่งชี้ว่าอาจเป็นการรายงานออกกำลังกาย (กรองหยาบ ๆ ก่อนถาม AI)
+const WORKOUT_HINTS = /วิ่ง|เดิน|เวท|ยกน้ำหนัก|ยิม|ฟิตเนส|โยคะ|พิลาทิส|ว่ายน้ำ|ปั่น|จักรยาน|คาร์ดิโอ|ซ้อม|ออกกำลัง|เต้น|กระโดดเชือก|ชกมวย|มวย|แบด|ฟุตบอล|บาส|เทนนิส|กอล์ฟ|ตีแบด|คลาส|บอดี้|สควอท|วิดพื้น|ซิทอัพ|แพลงก์|ลู่|ลาน|กม\.?|ก\.ม\.|กิโล|นาที|ชม\.?|ชั่วโมง|รอบ|เซ็ต|body\s*pump|workout|gym|run|walk|yoga|pilates|swim|bike|cardio|hiit|crossfit|weight|training|zumba|muay/i;
+
+function looksLikeWorkout(text) {
+  return WORKOUT_HINTS.test(text);
 }
 
 async function handleChallengeImage(env, event, chatId, userId) {
