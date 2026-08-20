@@ -39,8 +39,11 @@ export default {
     return new Response("Not found", { status: 404 });
   },
 
-  async scheduled(_event, env, ctx) {
-    ctx.waitUntil(pushNightlySummary(env));
+  async scheduled(event, env, ctx) {
+    // 13:00 UTC = 20:00 ไทย → เตือนกลุ่มชาเลนจ์ · 14:00 UTC = 21:00 ไทย → สรุปแคลอรี่
+    ctx.waitUntil(
+      event.cron === "0 13 * * *" ? pushChallengeReminder(env) : pushNightlySummary(env)
+    );
   },
 };
 
@@ -96,6 +99,22 @@ async function handleEvent(event, env) {
 
   const userId = event.source?.userId;
   if (!userId) return;
+
+  const chatId = event.source.groupId || event.source.roomId || userId;
+  const text = event.message.type === "text" ? event.message.text.trim() : "";
+
+  // สลับกลุ่มนี้เข้าโหมดชาเลนจ์ออกกำลังกาย (ใช้ได้เฉพาะในกลุ่ม)
+  if (/^โหมดชาเลนจ์$/.test(text) && event.source.type !== "user") {
+    await env.DB.prepare("UPDATE chat_targets SET mode = 'challenge' WHERE id = ?").bind(chatId).run();
+    await ensureMember(env, chatId, userId, event.source);
+    return lineReply(env, event.replyToken, challengeWelcomeText());
+  }
+
+  if (await getChatMode(env, chatId) === "challenge") {
+    if (event.message.type === "image") return handleChallengeImage(env, event, chatId, userId);
+    if (event.message.type === "text") return handleChallengeText(env, event, chatId, userId, text);
+    return;
+  }
 
   if (event.message.type === "image") {
     return handleImageMessage(event, env, userId);
@@ -341,12 +360,7 @@ async function maybeLogFoodFromText(env, event, user, text) {
 async function handleImageMessage(event, env, userId) {
   const user = await getOrCreateUser(env, userId, event.source);
 
-  const res = await fetch(`${LINE_DATA_API}/message/${event.message.id}/content`, {
-    headers: { Authorization: `Bearer ${sec(env, "LINE_CHANNEL_ACCESS_TOKEN")}` },
-  });
-  if (!res.ok) throw new Error(`LINE content fetch failed: ${res.status}`);
-  const mime = res.headers.get("content-type") || "image/jpeg";
-  const b64 = bytesToBase64(new Uint8Array(await res.arrayBuffer()));
+  const { mime, b64 } = await fetchLineImage(env, event.message.id);
 
   const result = await geminiEstimate(env, [
     { inline_data: { mime_type: mime, data: b64 } },
@@ -511,7 +525,7 @@ async function replyWeekSummary(env, event) {
 // cron 21:00 ไทย — push สรุปเข้าแชท
 async function pushNightlySummary(env) {
   const targets = (await env.DB.prepare(
-    "SELECT id FROM chat_targets WHERE type IN ('group','room')"
+    "SELECT id FROM chat_targets WHERE type IN ('group','room') AND COALESCE(mode,'calorie') = 'calorie'"
   ).all()).results;
   const users = await getAllUsers(env);
   if (!targets.length || !users.length) return;
@@ -591,6 +605,10 @@ const FOOD_SCHEMA = {
 
 // คืนค่า: ผลลัพธ์ | { __quota: true } เมื่อโควตาหมดทุกรุ่น | null เมื่อพังด้วยเหตุอื่น
 async function geminiEstimate(env, parts) {
+  return geminiJson(env, parts, FOOD_SCHEMA);
+}
+
+async function geminiJson(env, parts, schema) {
   const apiKey = sec(env, "GEMINI_API_KEY");
   if (!apiKey) {
     console.error("GEMINI_API_KEY not set");
@@ -613,7 +631,7 @@ async function geminiEstimate(env, parts) {
           contents: [{ parts }],
           generationConfig: {
             response_mime_type: "application/json",
-            response_schema: FOOD_SCHEMA,
+            response_schema: schema,
             temperature: 0.2,
           },
         }),
@@ -629,7 +647,9 @@ async function geminiEstimate(env, parts) {
       }
       try {
         const result = JSON.parse(text);
-        if (Array.isArray(result.items)) result.items = result.items.map(reconcileItem);
+        if (schema === FOOD_SCHEMA && Array.isArray(result.items)) {
+          result.items = result.items.map(reconcileItem);
+        }
         return result;
       } catch {
         console.error("gemini bad json", model, text.slice(0, 200));
@@ -808,6 +828,28 @@ function jsonResponse(obj, status = 200) {
 
 // ---------------------------------------------------------------- utils
 
+async function fetchLineImage(env, messageId) {
+  const res = await fetch(`${LINE_DATA_API}/message/${messageId}/content`, {
+    headers: { Authorization: `Bearer ${sec(env, "LINE_CHANNEL_ACCESS_TOKEN")}` },
+  });
+  if (!res.ok) throw new Error(`LINE content fetch failed: ${res.status}`);
+  return {
+    mime: res.headers.get("content-type") || "image/jpeg",
+    b64: bytesToBase64(new Uint8Array(await res.arrayBuffer())),
+  };
+}
+
+// วันที่เวลาไทย ถอย/เดินหน้า n วัน (0 = วันนี้)
+function bkkDateOffset(n) {
+  return new Date(Date.now() + 7 * 3600 * 1000 + n * 86400 * 1000).toISOString().slice(0, 10);
+}
+
+const TH_MONTHS_SHORT = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+function thaiDateText(d) {
+  const [, m, day] = d.split("-").map(Number);
+  return `${day} ${TH_MONTHS_SHORT[m - 1]}`;
+}
+
 // อ่านค่า secret แบบกันอักขระท้ายบรรทัดติดมา (เช่นตั้งผ่าน echo บน Windows จะแถม \r)
 function sec(env, name) {
   return (env[name] || "").trim();
@@ -846,4 +888,268 @@ function bytesToBase64(bytes) {
     bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
   }
   return btoa(bin);
+}
+
+// ================================================================ โหมดชาเลนจ์ออกกำลังกาย
+// กลุ่มที่ตั้ง mode='challenge' จะไม่นับแคล แต่คอยเช็คว่าใครออกกำลังกายวันนี้แล้วบ้าง
+
+const WORKOUT_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    is_workout: { type: "BOOLEAN" },
+    activity: { type: "STRING", description: "ประเภทกิจกรรมภาษาไทย เช่น เวทเทรนนิ่ง, วิ่ง, Body Pump, โยคะ" },
+    duration_min: { type: "NUMBER", description: "ระยะเวลาเป็นนาที ถ้าเห็นบนหน้าจอ" },
+    kcal: { type: "NUMBER", description: "แคลอรี่ที่เผาผลาญ ถ้าเห็นบนหน้าจอ (ใช้ active calories ถ้ามีทั้งสองค่า)" },
+    note: { type: "STRING" },
+  },
+  required: ["is_workout"],
+};
+
+const WORKOUT_IMAGE_PROMPT = `ดูรูปนี้แล้วบอกว่าเป็นหลักฐานการออกกำลังกายหรือไม่
+
+นับเป็นหลักฐานการออกกำลังกาย ถ้าเป็นอย่างใดอย่างหนึ่ง:
+- หน้าจอสมาร์ทวอทช์/แอปออกกำลังกาย (Apple Watch, Garmin, Whoop, Strava, Nike Run) ที่มีเวลา/แคลอรี่/โซนหัวใจ
+- รูปในฟิตเนส ยิม คลาสออกกำลังกาย ลู่วิ่ง เครื่องเล่นเวท
+- รูประหว่าง/หลังวิ่ง ปั่นจักรยาน ว่ายน้ำ เล่นกีฬา โยคะ
+- รูปเซลฟี่ในชุดออกกำลังกายที่ยิมหรือสนาม
+
+ถ้าเห็นตัวเลขบนหน้าจอ ให้อ่านค่าจริงจากรูป (ระยะเวลาแปลงเป็นนาที, แคลอรี่เลือก active calories ถ้ามีทั้ง active และ total)
+เมื่อ is_workout = true ต้องใส่ activity เป็นชื่อกิจกรรมภาษาไทยเสมอ ถ้าดูไม่ออกว่ากิจกรรมอะไรให้ใส่ว่า "ออกกำลังกาย"
+ถ้าเป็นรูปอาหาร รูปวิว เซลฟี่ธรรมดา หรือรูปอื่นที่ไม่เกี่ยวกับการออกกำลังกาย ให้ is_workout = false`;
+
+function workoutTextPrompt(text) {
+  return `ผู้ใช้พิมพ์ข้อความในกลุ่มชาเลนจ์ออกกำลังกาย: "${text}"
+
+ถ้าเป็นการรายงานว่าตัวเองออกกำลังกาย (เช่น "วิ่ง 5 กม.", "เล่นเวท 1 ชม.", "โยคะ 45 นาที", "ว่ายน้ำมาแล้ว") ให้ is_workout = true พร้อมระบุกิจกรรม ระยะเวลา และประเมินแคลอรี่ที่เผาผลาญ
+ถ้าเป็นบทสนทนาทั่วไป ทักทาย ถามคำถาม หรือชวนคุย ให้ is_workout = false`;
+}
+
+async function geminiWorkout(env, parts) {
+  return geminiJson(env, parts, WORKOUT_SCHEMA);
+}
+
+async function getChatMode(env, chatId) {
+  const row = await env.DB.prepare("SELECT mode FROM chat_targets WHERE id = ?").bind(chatId).first();
+  return row?.mode || "calorie";
+}
+
+async function handleChallengeText(env, event, chatId, userId, text) {
+  if (/^(เข้าร่วม|สมัคร|join)$/i.test(text)) return joinChallenge(env, event, chatId, userId);
+  if (/^(ออกจากชาเลนจ์|ขอออก|leave)$/i.test(text)) return leaveChallenge(env, event, chatId, userId);
+  if (/^(ใครยังไม่ออก|ใครยังไม่|เช็คชื่อ|วันนี้)$/.test(text)) return replyChallengeToday(env, event, chatId);
+  if (/^(อันดับ|ตาราง|สรุป|leaderboard)$/i.test(text)) return replyLeaderboard(env, event, chatId);
+  if (/^(คำสั่ง|ช่วยเหลือ|help)$/i.test(text)) return lineReply(env, event.replyToken, challengeHelpText());
+  if (/^โหมดแคล(อรี่)?$/.test(text)) {
+    await env.DB.prepare("UPDATE chat_targets SET mode = 'calorie' WHERE id = ?").bind(chatId).run();
+    return lineReply(env, event.replyToken, "สลับกลับเป็นโหมดนับแคลอรี่แล้วครับ 🍚");
+  }
+  if (text.length > 120) return;
+
+  const result = await geminiWorkout(env, [{ text: workoutTextPrompt(text) }]);
+  if (result?.__quota) return lineReply(env, event.replyToken, quotaText());
+  if (!result?.is_workout) return; // คุยเล่นทั่วไป → เงียบไว้
+  return saveWorkoutAndReply(env, event, chatId, userId, result, "text");
+}
+
+async function handleChallengeImage(env, event, chatId, userId) {
+  const b64AndMime = await fetchLineImage(env, event.message.id);
+  const result = await geminiWorkout(env, [
+    { inline_data: { mime_type: b64AndMime.mime, data: b64AndMime.b64 } },
+    { text: WORKOUT_IMAGE_PROMPT },
+  ]);
+  if (result?.__quota) return lineReply(env, event.replyToken, quotaText());
+  if (!result?.is_workout) return; // รูปอื่นในกลุ่ม → เงียบไว้ ไม่รบกวน
+  return saveWorkoutAndReply(env, event, chatId, userId, result, "image");
+}
+
+async function saveWorkoutAndReply(env, event, chatId, userId, result, source) {
+  const today = bkkToday();
+  const name = await ensureMember(env, chatId, userId, event.source);
+  const already = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM workouts WHERE chat_id = ? AND line_user_id = ? AND logged_date = ?"
+  ).bind(chatId, userId, today).first();
+
+  await env.DB.prepare(
+    `INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, logged_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    chatId, userId, String(result.activity || "ออกกำลังกาย").slice(0, 60),
+    result.duration_min ? Math.round(result.duration_min) : null,
+    result.kcal ? Math.round(result.kcal) : null,
+    source, today
+  ).run();
+
+  const detail = [
+    result.duration_min ? `${Math.round(result.duration_min)} นาที` : null,
+    result.kcal ? `${fmtNum(result.kcal)} kcal` : null,
+  ].filter(Boolean).join(" · ");
+
+  const streak = await getStreak(env, chatId, userId);
+  const lines = [
+    already.n > 0 ? `${name} ซ้อมรอบที่ ${already.n + 1} ของวันนี้! 🔥` : `เช็คอินแล้ว ${name} 💪`,
+    `${result.activity || "ออกกำลังกาย"}${detail ? " — " + detail : ""}`,
+  ];
+  if (already.n === 0 && streak > 1) lines.push(`ต่อเนื่อง ${streak} วันติด 🔥`);
+
+  const { done, missing } = await getTodayStatus(env, chatId);
+  if (missing.length === 0 && done.length > 0) lines.push("", "วันนี้ครบทุกคนแล้ว! 🎉");
+  else if (missing.length > 0) lines.push("", `เหลืออีก ${missing.length} คนที่ยังไม่ออกวันนี้`);
+
+  return lineReply(env, event.replyToken, lines.join("\n"));
+}
+
+async function ensureMember(env, chatId, userId, source) {
+  const existing = await env.DB.prepare(
+    "SELECT display_name FROM challenge_members WHERE chat_id = ? AND line_user_id = ?"
+  ).bind(chatId, userId).first();
+  if (existing) {
+    await env.DB.prepare(
+      "UPDATE challenge_members SET active = 1 WHERE chat_id = ? AND line_user_id = ?"
+    ).bind(chatId, userId).run();
+    return existing.display_name;
+  }
+  const name = await fetchDisplayName(env, source);
+  await env.DB.prepare(
+    "INSERT INTO challenge_members (chat_id, line_user_id, display_name) VALUES (?, ?, ?)"
+  ).bind(chatId, userId, name).run();
+  return name;
+}
+
+async function joinChallenge(env, event, chatId, userId) {
+  const name = await ensureMember(env, chatId, userId, event.source);
+  const total = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM challenge_members WHERE chat_id = ? AND active = 1"
+  ).bind(chatId).first();
+  return lineReply(env, event.replyToken,
+    `ยินดีต้อนรับ ${name} 🎉\nตอนนี้มีสมาชิก ${total.n} คนในชาเลนจ์\n\nออกกำลังกายเสร็จส่งรูปมาได้เลยครับ 📸`);
+}
+
+async function leaveChallenge(env, event, chatId, userId) {
+  await env.DB.prepare(
+    "UPDATE challenge_members SET active = 0 WHERE chat_id = ? AND line_user_id = ?"
+  ).bind(chatId, userId).run();
+  return lineReply(env, event.replyToken, "ออกจากชาเลนจ์แล้วครับ พิมพ์ \"เข้าร่วม\" กลับมาได้ตลอด 👋");
+}
+
+// รายชื่อคนที่ออก/ยังไม่ออกวันนี้
+async function getTodayStatus(env, chatId) {
+  const today = bkkToday();
+  const rows = (await env.DB.prepare(
+    `SELECT m.line_user_id, m.display_name,
+            (SELECT COUNT(*) FROM workouts w
+              WHERE w.chat_id = m.chat_id AND w.line_user_id = m.line_user_id AND w.logged_date = ?) AS n
+     FROM challenge_members m WHERE m.chat_id = ? AND m.active = 1
+     ORDER BY m.joined_at`
+  ).bind(today, chatId).all()).results;
+  return {
+    done: rows.filter((r) => r.n > 0).map((r) => r.display_name),
+    missing: rows.filter((r) => !r.n).map((r) => r.display_name),
+  };
+}
+
+// จำนวนวันที่ออกติดต่อกัน (นับถึงวันนี้ หรือเมื่อวานถ้าวันนี้ยังไม่ออก)
+async function getStreak(env, chatId, userId) {
+  const rows = (await env.DB.prepare(
+    `SELECT DISTINCT logged_date FROM workouts
+     WHERE chat_id = ? AND line_user_id = ? ORDER BY logged_date DESC LIMIT 400`
+  ).bind(chatId, userId).all()).results;
+  if (!rows.length) return 0;
+  const dates = new Set(rows.map((r) => r.logged_date));
+  const start = dates.has(bkkToday()) ? 0 : 1;
+  let streak = 0;
+  for (let i = start; i < 400; i++) {
+    if (!dates.has(bkkDateOffset(-i))) break;
+    streak++;
+  }
+  return streak;
+}
+
+async function replyChallengeToday(env, event, chatId) {
+  const { done, missing } = await getTodayStatus(env, chatId);
+  if (!done.length && !missing.length) {
+    return lineReply(env, event.replyToken,
+      "ยังไม่มีใครเข้าร่วมชาเลนจ์เลยครับ\nพิมพ์ \"เข้าร่วม\" เพื่อสมัคร (พิมพ์กันคนละครั้ง)");
+  }
+  return lineReply(env, event.replyToken, todayStatusText(done, missing));
+}
+
+function todayStatusText(done, missing, withNudge = false) {
+  const lines = [`เช็คชื่อวันนี้ (${thaiDateText(bkkToday())}) 📋`, ""];
+  lines.push(`✅ ออกแล้ว ${done.length} คน`);
+  if (done.length) lines.push("   " + done.join(", "));
+  lines.push("");
+  if (missing.length) {
+    lines.push(`⏳ ยังไม่ออก ${missing.length} คน`);
+    lines.push("   " + missing.join(", "));
+    if (withNudge) lines.push("", "เหลือเวลาอีก 3 ชั่วโมง ส่งรูปมาได้เลย 💪");
+  } else {
+    lines.push("ครบทุกคนแล้ว! เก่งมาก 🎉🔥");
+  }
+  return lines.join("\n");
+}
+
+async function replyLeaderboard(env, event, chatId) {
+  const weekStart = bkkDateOffset(-6);
+  const rows = (await env.DB.prepare(
+    `SELECT m.display_name, m.line_user_id,
+            (SELECT COUNT(DISTINCT logged_date) FROM workouts w
+              WHERE w.chat_id = m.chat_id AND w.line_user_id = m.line_user_id AND w.logged_date >= ?) AS week_days,
+            (SELECT COUNT(DISTINCT logged_date) FROM workouts w
+              WHERE w.chat_id = m.chat_id AND w.line_user_id = m.line_user_id) AS total_days
+     FROM challenge_members m WHERE m.chat_id = ? AND m.active = 1
+     ORDER BY week_days DESC, total_days DESC`
+  ).bind(weekStart, chatId).all()).results;
+
+  if (!rows.length) return lineReply(env, event.replyToken, "ยังไม่มีสมาชิกในชาเลนจ์ครับ พิมพ์ \"เข้าร่วม\" ได้เลย");
+
+  const medals = ["🥇", "🥈", "🥉"];
+  const lines = ["อันดับ 7 วันล่าสุด 🏆", ""];
+  rows.forEach((r, i) => {
+    const mark = r.week_days === 0 ? "  " : medals[i] || `${i + 1}.`;
+    lines.push(`${mark} ${r.display_name} — ${r.week_days}/7 วัน (รวม ${r.total_days})`);
+  });
+  return lineReply(env, event.replyToken, lines.join("\n"));
+}
+
+function challengeWelcomeText() {
+  return [
+    "เปิดโหมดชาเลนจ์ออกกำลังกายแล้วครับ 💪🔥",
+    "",
+    "ทุกคนในกลุ่มพิมพ์ \"เข้าร่วม\" คนละครั้งเพื่อสมัครก่อนนะครับ",
+    "จากนั้นออกกำลังกายเสร็จก็ส่งรูปมาได้เลย — บอทอ่านรูปแล้วเช็คอินให้อัตโนมัติ",
+    "",
+    "ทุกวัน 20:00 ผมจะประกาศว่าใครยังไม่ออก ⏰",
+    "พิมพ์ \"คำสั่ง\" เพื่อดูวิธีใช้ทั้งหมด",
+  ].join("\n");
+}
+
+function challengeHelpText() {
+  return [
+    "โหมดชาเลนจ์ออกกำลังกาย 💪",
+    "",
+    "📸 ส่งรูปตอนออกกำลังกาย — บอทอ่านรูปแล้วเช็คอินให้อัตโนมัติ",
+    "   (รูปในยิม / หน้าจอนาฬิกา / แอปวิ่ง อ่านเวลากับแคลอรี่ได้เลย)",
+    "✍️ หรือพิมพ์บอก เช่น \"วิ่ง 5 กม.\" \"เล่นเวท 1 ชม.\"",
+    "",
+    "เข้าร่วม — สมัครเข้าชาเลนจ์ (พิมพ์กันคนละครั้ง)",
+    "วันนี้ — ดูว่าใครออกแล้ว ใครยังไม่ออก",
+    "อันดับ — ตารางคะแนน 7 วันล่าสุด",
+    "ออกจากชาเลนจ์ — ถอนตัว",
+    "",
+    "ทุกวัน 20:00 บอทจะเตือนคนที่ยังไม่ออกให้เองครับ ⏰",
+  ].join("\n");
+}
+
+// cron 20:00 ไทย — เตือนคนที่ยังไม่ออกกำลังกาย
+async function pushChallengeReminder(env) {
+  const groups = (await env.DB.prepare(
+    "SELECT id FROM chat_targets WHERE mode = 'challenge'"
+  ).all()).results;
+
+  for (const g of groups) {
+    const { done, missing } = await getTodayStatus(env, g.id);
+    if (!done.length && !missing.length) continue;
+    await linePush(env, g.id, todayStatusText(done, missing, true))
+      .catch((e) => console.error("challenge push fail", e.message));
+  }
 }

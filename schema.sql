@@ -44,5 +44,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_weights_user_date ON weights(line_user_id,
 CREATE TABLE IF NOT EXISTS chat_targets (
   id TEXT PRIMARY KEY,          -- groupId หรือ userId
   type TEXT NOT NULL,           -- 'group' | 'room' | 'user'
+  mode TEXT DEFAULT 'calorie',  -- 'calorie' (นับแคล) | 'challenge' (ชาเลนจ์ออกกำลังกาย)
   created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- ============ โหมดชาเลนจ์ออกกำลังกาย (workout challenge) ============
+-- กลุ่มไหนพิมพ์ "โหมดชาเลนจ์" จะสลับมาโหมดนี้ (เก็บใน chat_targets.mode)
+
+-- สมาชิกที่เข้าร่วมชาเลนจ์ในแต่ละกลุ่ม (ต้องพิมพ์ "เข้าร่วม" เอง
+-- เพราะ LINE ให้ดึงรายชื่อสมาชิกกลุ่มได้เฉพาะ OA ที่ verified)
+CREATE TABLE IF NOT EXISTS challenge_members (
+  chat_id TEXT NOT NULL,
+  line_user_id TEXT NOT NULL,
+  display_name TEXT,
+  active INTEGER DEFAULT 1,
+  joined_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (chat_id, line_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS workouts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id TEXT NOT NULL,
+  line_user_id TEXT NOT NULL,
+  activity TEXT NOT NULL,
+  duration_min INTEGER,
+  kcal INTEGER,
+  source TEXT DEFAULT 'image',   -- 'image' | 'text'
+  logged_date TEXT NOT NULL,     -- YYYY-MM-DD (เวลาไทย)
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_workouts_chat_date ON workouts(chat_id, logged_date);
+CREATE INDEX IF NOT EXISTS idx_workouts_member ON workouts(chat_id, line_user_id, logged_date);
