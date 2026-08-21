@@ -668,26 +668,30 @@ async function geminiJson(env, parts, schema) {
 
 // ---------------------------------------------------------------- LINE helpers
 
-async function lineReply(env, replyToken, text) {
+async function lineReply(env, replyToken, text, mention) {
+  const message = { type: "text", text: text.slice(0, 4900) };
+  if (mention?.mentionees?.length) message.mention = mention;
   const res = await fetch(`${LINE_API}/message/reply`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${sec(env, "LINE_CHANNEL_ACCESS_TOKEN")}`,
     },
-    body: JSON.stringify({ replyToken, messages: [{ type: "text", text: text.slice(0, 4900) }] }),
+    body: JSON.stringify({ replyToken, messages: [message] }),
   });
   if (!res.ok) console.error("reply fail", res.status, await res.text());
 }
 
-async function linePush(env, to, text) {
+async function linePush(env, to, text, mention) {
+  const message = { type: "text", text: text.slice(0, 4900) };
+  if (mention?.mentionees?.length) message.mention = mention;
   const res = await fetch(`${LINE_API}/message/push`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${sec(env, "LINE_CHANNEL_ACCESS_TOKEN")}`,
     },
-    body: JSON.stringify({ to, messages: [{ type: "text", text: text.slice(0, 4900) }] }),
+    body: JSON.stringify({ to, messages: [message] }),
   });
   if (!res.ok) throw new Error(`push ${res.status}: ${await res.text()}`);
 }
@@ -938,6 +942,7 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   if (/^(เข้าร่วม|สมัคร|join)$/i.test(text)) return joinChallenge(env, event, chatId, userId);
   if (/^(ออกจากชาเลนจ์|ขอออก|leave)$/i.test(text)) return leaveChallenge(env, event, chatId, userId);
   if (/^(ใครยังไม่ออก|ใครยังไม่|เช็คชื่อ|วันนี้)$/.test(text)) return replyChallengeToday(env, event, chatId);
+  if (/^(เตือน|ทวง|แท็ก)$/.test(text)) return replyNudge(env, event, chatId);
   if (/^(อันดับ|ตาราง|สรุป|leaderboard)$/i.test(text)) return replyLeaderboard(env, event, chatId);
   if (/^(คำสั่ง|ช่วยเหลือ|help)$/i.test(text)) return lineReply(env, event.replyToken, challengeHelpText());
   if (/^โหมดแคล(อรี่)?$/.test(text)) {
@@ -1051,8 +1056,8 @@ async function getTodayStatus(env, chatId) {
      ORDER BY m.joined_at`
   ).bind(today, chatId).all()).results;
   return {
-    done: rows.filter((r) => r.n > 0).map((r) => r.display_name),
-    missing: rows.filter((r) => !r.n).map((r) => r.display_name),
+    done: rows.filter((r) => r.n > 0),
+    missing: rows.filter((r) => !r.n),
   };
 }
 
@@ -1085,11 +1090,11 @@ async function replyChallengeToday(env, event, chatId) {
 function todayStatusText(done, missing, withNudge = false) {
   const lines = [`เช็คชื่อวันนี้ (${thaiDateText(bkkToday())}) 📋`, ""];
   lines.push(`✅ ออกแล้ว ${done.length} คน`);
-  if (done.length) lines.push("   " + done.join(", "));
+  if (done.length) lines.push("   " + done.map((m) => m.display_name).join(", "));
   lines.push("");
   if (missing.length) {
     lines.push(`⏳ ยังไม่ออก ${missing.length} คน`);
-    lines.push("   " + missing.join(", "));
+    lines.push("   " + missing.map((m) => m.display_name).join(", "));
     if (withNudge) lines.push("", "เหลือเวลาอีก 3 ชั่วโมง ส่งรูปมาได้เลย 💪");
   } else {
     lines.push("ครบทุกคนแล้ว! เก่งมาก 🎉🔥");
@@ -1132,6 +1137,19 @@ function challengeWelcomeText() {
   ].join("\n");
 }
 
+// เรียกเตือนแบบแท็กชื่อเองได้ ไม่ต้องรอ 20:00 (reply ไม่กินโควตาข้อความ)
+async function replyNudge(env, event, chatId) {
+  const { done, missing } = await getTodayStatus(env, chatId);
+  if (!done.length && !missing.length) {
+    return lineReply(env, event.replyToken, "ยังไม่มีใครเข้าร่วมชาเลนจ์เลยครับ พิมพ์ \"เข้าร่วม\" ก่อนนะ");
+  }
+  if (!missing.length) {
+    return lineReply(env, event.replyToken, todayStatusText(done, missing));
+  }
+  const nudge = buildNudge(done, missing);
+  return lineReply(env, event.replyToken, nudge.text, nudge.mention);
+}
+
 function challengeHelpText() {
   return [
     "โหมดชาเลนจ์ออกกำลังกาย 💪",
@@ -1142,11 +1160,29 @@ function challengeHelpText() {
     "",
     "เข้าร่วม — สมัครเข้าชาเลนจ์ (พิมพ์กันคนละครั้ง)",
     "วันนี้ — ดูว่าใครออกแล้ว ใครยังไม่ออก",
+    "เตือน — แท็กชื่อคนที่ยังไม่ออก (เด้งแจ้งเตือนถึงตัว)",
     "อันดับ — ตารางคะแนน 7 วันล่าสุด",
     "ออกจากชาเลนจ์ — ถอนตัว",
     "",
     "ทุกวัน 20:00 บอทจะเตือนคนที่ยังไม่ออกให้เองครับ ⏰",
   ].join("\n");
+}
+
+// สร้างข้อความเตือนแบบ @แท็กชื่อ (LINE จะเด้งแจ้งเตือนถึงคนนั้นโดยตรง)
+// แท็กต้องอยู่ต้นข้อความ เพราะ index ที่ส่งให้ LINE นับจากตัวอักษรตัวแรก
+function buildNudge(done, missing) {
+  const tagged = missing.slice(0, 20); // LINE แท็กได้สูงสุด 20 คนต่อข้อความ
+  let head = "";
+  const mentionees = [];
+  for (const m of tagged) {
+    const label = "@" + m.display_name;
+    mentionees.push({ index: head.length, length: label.length, userId: m.line_user_id });
+    head += label + " ";
+  }
+  const rest = tagged.length < missing.length ? `และอีก ${missing.length - tagged.length} คน` : "";
+  const text = `${head}${rest}\n\nยังไม่ออกกำลังกายวันนี้นะ เหลืออีก 3 ชั่วโมง 💪\n\n` +
+    todayStatusText(done, missing);
+  return { text, mention: { mentionees } };
 }
 
 // cron 20:00 ไทย — เตือนคนที่ยังไม่ออกกำลังกาย
@@ -1158,7 +1194,17 @@ async function pushChallengeReminder(env) {
   for (const g of groups) {
     const { done, missing } = await getTodayStatus(env, g.id);
     if (!done.length && !missing.length) continue;
-    await linePush(env, g.id, todayStatusText(done, missing, true))
-      .catch((e) => console.error("challenge push fail", e.message));
+
+    if (!missing.length) {
+      await linePush(env, g.id, todayStatusText(done, missing, true))
+        .catch((e) => console.error("challenge push fail", e.message));
+      continue;
+    }
+    const nudge = buildNudge(done, missing);
+    await linePush(env, g.id, nudge.text, nudge.mention).catch(async (e) => {
+      // แท็กไม่ผ่าน (เช่น มีคนออกจากกลุ่มไปแล้ว) → ส่งแบบข้อความธรรมดาแทน
+      console.error("mention push failed, falling back", e.message);
+      await linePush(env, g.id, todayStatusText(done, missing, true)).catch(() => {});
+    });
   }
 }
