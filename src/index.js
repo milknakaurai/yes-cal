@@ -111,7 +111,6 @@ async function handleEvent(event, env) {
   //  ในโหมดชาเลนจ์คำนี้จะถูกอ่านเป็นการรายงานว่าออกกำลังกายมาแทน)
   if (mode !== "challenge" && event.source.type !== "user" && /^(ออกกำลังกาย|โหมดชาเลนจ์)$/.test(text)) {
     await env.DB.prepare("UPDATE chat_targets SET mode = 'challenge' WHERE id = ?").bind(chatId).run();
-    await ensureMember(env, chatId, userId, event.source);
     return lineReply(env, event.replyToken, challengeWelcomeText());
   }
 
@@ -978,6 +977,7 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   if (/^(ออกจากชาเลนจ์|ขอออก|leave)$/i.test(text)) return leaveChallenge(env, event, chatId, userId);
   if (/^(ใครยังไม่ออก|ใครยังไม่|เช็คชื่อ|วันนี้)$/.test(text)) return replyChallengeToday(env, event, chatId);
   if (/^(เตือน|ทวง|แท็ก)$/.test(text)) return replyNudge(env, event, chatId);
+  if (/^(สมาชิก|รายชื่อ|ใครอยู่บ้าง)$/.test(text)) return replyMembers(env, event, chatId);
   if (/^(อันดับ|ตาราง|สรุป|leaderboard)$/i.test(text)) return replyLeaderboard(env, event, chatId);
   if (/^(คำสั่ง|ช่วยเหลือ|help)$/i.test(text)) return lineReply(env, event.replyToken, challengeHelpText());
   if (/^โหมดแคล(อรี่)?$/.test(text)) {
@@ -1169,12 +1169,24 @@ function challengeWelcomeText() {
   return [
     "เปิดโหมดชาเลนจ์ออกกำลังกายแล้วครับ 💪🔥",
     "",
-    "ทุกคนในกลุ่มพิมพ์ \"เข้าร่วม\" คนละครั้งเพื่อสมัครก่อนนะครับ",
+    "ทุกคนในกลุ่มพิมพ์ \"เข้าร่วม\" คนละครั้งเพื่อสมัครก่อนนะครับ (คนเปิดโหมดก็ต้องพิมพ์ด้วยนะ)",
     "จากนั้นออกกำลังกายเสร็จก็ส่งรูปมาได้เลย — บอทอ่านรูปแล้วเช็คอินให้อัตโนมัติ",
     "",
     "ทุกวัน 22:00 ผมจะประกาศว่าใครยังไม่ออก ⏰",
     "พิมพ์ \"คำสั่ง\" เพื่อดูวิธีใช้ทั้งหมด",
   ].join("\n");
+}
+
+async function replyMembers(env, event, chatId) {
+  const rows = (await env.DB.prepare(
+    `SELECT display_name FROM challenge_members WHERE chat_id = ? AND active = 1 ORDER BY joined_at`
+  ).bind(chatId).all()).results;
+  if (!rows.length) {
+    return lineReply(env, event.replyToken, "ยังไม่มีใครเข้าร่วมเลยครับ พิมพ์ \"เข้าร่วม\" ได้เลย 💪");
+  }
+  return lineReply(env, event.replyToken,
+    `สมาชิกชาเลนจ์ ${rows.length} คน 👥\n` + rows.map((r, i) => `${i + 1}. ${r.display_name}`).join("\n") +
+    `\n\nใครยังไม่ได้สมัครพิมพ์ "เข้าร่วม" · อยากถอนตัวพิมพ์ "ออกจากชาเลนจ์"`);
 }
 
 // เรียกเตือนแบบแท็กชื่อเองได้ ไม่ต้องรอ 22:00 (reply ไม่กินโควตาข้อความ)
@@ -1200,6 +1212,7 @@ function challengeHelpText() {
     "",
     "เข้าร่วม — สมัครเข้าชาเลนจ์ (พิมพ์กันคนละครั้ง)",
     "วันนี้ — ดูว่าใครออกแล้ว ใครยังไม่ออก",
+    "สมาชิก — ดูรายชื่อคนที่เข้าร่วมทั้งหมด",
     "เตือน — แท็กชื่อคนที่ยังไม่ออก (เด้งแจ้งเตือนถึงตัว)",
     "อันดับ — ตารางคะแนน 7 วันล่าสุด",
     "ออกจากชาเลนจ์ — ถอนตัว",
