@@ -996,7 +996,9 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   // บอกว่าเป็นของเมื่อวาน — ถ้าไม่มีรายละเอียดอื่น ถือว่าขอย้ายรายการล่าสุดย้อนหลัง
   // ถ้ามีรายละเอียดด้วย (เช่น "เมื่อวานวิ่ง 5 กม.") ให้บันทึกใหม่ลงวันเมื่อวานเลย
   let dateOverride = null;
-  if (isBackdateOnly(text)) return moveLastWorkoutBack(env, event, chatId, userId);
+  if (isBackdateOnly(text)) {
+    return moveLastWorkoutBack(env, event, chatId, userId, event.message?.quotedMessageId);
+  }
   if (YESTERDAY_HINT.test(text) && looksLikeWorkout(text.replace(YESTERDAY_HINT, " "))) {
     dateOverride = bkkDateOffset(-1);
   }
@@ -1048,13 +1050,13 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
   ).bind(chatId, userId, day).first();
 
   await env.DB.prepare(
-    `INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, logged_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, message_id, logged_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     chatId, userId, String(result.activity || "ออกกำลังกาย").slice(0, 60),
     result.duration_min ? Math.round(result.duration_min) : null,
     result.kcal ? Math.round(result.kcal) : null,
-    source, day
+    source, event.message?.id || null, day
   ).run();
 
   const detail = [
@@ -1089,33 +1091,55 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
   return lineReply(env, event.replyToken, lines.join("\n"));
 }
 
-// ย้ายรายการเช็คอินล่าสุดของวันนี้ ไปเป็นของเมื่อวาน
-async function moveLastWorkoutBack(env, event, chatId, userId) {
+// ย้ายรายการเช็คอินไปเป็นของเมื่อวาน
+// ถ้า reply (quote) มาที่ข้อความ/รูปไหน จะย้ายรายการของข้อความนั้น — ช่วยแก้ให้เพื่อนได้
+// ถ้าไม่ได้ reply มา จะย้ายรายการล่าสุดของคนที่พิมพ์เอง
+async function moveLastWorkoutBack(env, event, chatId, userId, quotedMessageId = null) {
   const today = bkkToday();
   const yesterday = bkkDateOffset(-1);
-  const last = await env.DB.prepare(
-    `SELECT id, activity FROM workouts
-     WHERE chat_id = ? AND line_user_id = ? AND logged_date = ? ORDER BY id DESC LIMIT 1`
-  ).bind(chatId, userId, today).first();
 
-  if (!last) {
+  let target = null;
+  if (quotedMessageId) {
+    target = await env.DB.prepare(
+      `SELECT w.id, w.activity, w.logged_date, m.display_name
+       FROM workouts w LEFT JOIN challenge_members m
+         ON m.chat_id = w.chat_id AND m.line_user_id = w.line_user_id
+       WHERE w.chat_id = ? AND w.message_id = ? LIMIT 1`
+    ).bind(chatId, quotedMessageId).first();
+  }
+  if (!target) {
+    target = await env.DB.prepare(
+      `SELECT w.id, w.activity, w.logged_date, m.display_name
+       FROM workouts w LEFT JOIN challenge_members m
+         ON m.chat_id = w.chat_id AND m.line_user_id = w.line_user_id
+       WHERE w.chat_id = ? AND w.line_user_id = ? AND w.logged_date = ?
+       ORDER BY w.id DESC LIMIT 1`
+    ).bind(chatId, userId, today).first();
+  }
+
+  if (!target) {
     return lineReply(env, event.replyToken,
-      `วันนี้ยังไม่มีรายการของคุณให้ย้ายครับ 🤔\n\n` +
-      `ถ้าจะบันทึกของเมื่อวาน พิมพ์พร้อมรายละเอียดได้เลย เช่น "เมื่อวานวิ่ง 5 กม."`);
+      `ไม่เจอรายการให้ย้ายครับ 🤔\n\n` +
+      `ลอง reply ที่รูปเช็คอินนั้นแล้วพิมพ์ "เมื่อวาน"\n` +
+      `หรือบันทึกใหม่พร้อมรายละเอียด เช่น "เมื่อวานวิ่ง 5 กม."`);
+  }
+  if (target.logged_date === yesterday) {
+    return lineReply(env, event.replyToken,
+      `"${target.activity}" ของ ${target.display_name || "คนนี้"} อยู่ที่วันเมื่อวานอยู่แล้วครับ 👍`);
   }
 
   await env.DB.prepare("UPDATE workouts SET logged_date = ? WHERE id = ?")
-    .bind(yesterday, last.id).run();
+    .bind(yesterday, target.id).run();
 
   const { done, missing } = await getTodayStatus(env, chatId);
-  const lines = [
-    `ย้าย "${last.activity}" ไปเป็นของเมื่อวาน (${thaiDateText(yesterday)}) แล้วครับ 📅`,
+  const who = target.display_name ? `ของ ${target.display_name} ` : "";
+  return lineReply(env, event.replyToken, [
+    `ย้าย "${target.activity}" ${who}ไปเป็นของเมื่อวาน (${thaiDateText(yesterday)}) แล้วครับ 📅`,
     "",
     missing.length
-      ? `วันนี้เลยยังไม่นับนะ — เหลืออีก ${missing.length} คนที่ยังไม่ออก (รวมคุณด้วยถ้ายังไม่ได้เช็คอินวันนี้)`
+      ? `วันนี้เลยยังไม่นับ — เหลืออีก ${missing.length} คนที่ยังไม่ออก`
       : "วันนี้ทุกคนเช็คอินครบแล้ว 🎉",
-  ];
-  return lineReply(env, event.replyToken, lines.join("\n"));
+  ].join("\n"));
 }
 
 async function ensureMember(env, chatId, userId, source) {
@@ -1280,7 +1304,8 @@ function challengeHelpText() {
     "เข้าร่วม — สมัครเข้าชาเลนจ์ (พิมพ์กันคนละครั้ง)",
     "วันนี้ — ดูว่าใครออกแล้ว ใครยังไม่ออก",
     "สมาชิก — ดูรายชื่อคนที่เข้าร่วมทั้งหมด",
-    "เมื่อวาน — ย้ายรายการล่าสุดไปเป็นของเมื่อวาน (ส่งรูปย้อนหลัง)",
+    "เมื่อวาน — ย้ายรายการล่าสุดไปเป็นของเมื่อวาน",
+    "   (reply ที่รูปของใครแล้วพิมพ์ \"เมื่อวาน\" ก็แก้ให้คนนั้นได้)",
     "เตือน — แท็กชื่อคนที่ยังไม่ออก (เด้งแจ้งเตือนถึงตัว)",
     "อันดับ — ตารางคะแนน 7 วันล่าสุด",
     "ออกจากชาเลนจ์ — ถอนตัว",

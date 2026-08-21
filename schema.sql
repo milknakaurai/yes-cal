@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS workouts (
   duration_min INTEGER,
   kcal INTEGER,
   source TEXT DEFAULT 'image',   -- 'image' | 'text'
+  message_id TEXT,               -- id ข้อความ LINE ที่ทำให้เกิดรายการนี้ (ไว้ reply มาแก้วันที่)
   logged_date TEXT NOT NULL,     -- YYYY-MM-DD (เวลาไทย)
   created_at TEXT DEFAULT (datetime('now'))
 );
@@ -84,3 +85,7 @@ CREATE TABLE IF NOT EXISTS api_usage (
   n INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (day, kind, label)
 );
+
+-- เก็บ id ข้อความ LINE ของรายการเช็คอิน เพื่อให้ reply กลับไปที่รูปนั้นแล้วแก้วันที่ได้
+-- (ตารางที่มีอยู่แล้วให้รัน: ALTER TABLE workouts ADD COLUMN message_id TEXT)
+CREATE INDEX IF NOT EXISTS idx_workouts_message ON workouts(chat_id, message_id);
