@@ -39,7 +39,6 @@ bash scripts/deploy.sh
 - `src/index.js` — Worker ทั้งหมด: LINE webhook + Gemini + D1 + dashboard API (`/api/overview`) + cron 22:00 ไทย (15:00 UTC) เตือนกลุ่มชาเลนจ์
 - `public/index.html` — dashboard หน้าเดียว ไม่มี dependency ภายนอก รองรับ dark mode
 - `src/food-reference.js` — ตารางค่าโภชนาการอาหารไทย ~40 เมนู ที่ให้ Gemini ยึดก่อนประเมินเอง
-- `src/exercise-reference.js` — ตารางการเผาผลาญ ~30 กิจกรรม (MET ที่ 65 กก.) นับตามหน่วยจริง เช่น ไดร์ฟกอล์ฟต่อถาด
 - `src/jokes.js` — คลังมุกของบอท สุ่มทุกครั้ง (ล้อความขี้เกียจได้ ห้ามล้อรูปร่าง/น้ำหนัก)
 - `schema.sql` — users / meals / weights / chat_targets / challenge_members / workouts / api_usage
 - `scripts/deploy.sh` — deploy ครบจบในสคริปต์เดียว
@@ -52,6 +51,8 @@ bash scripts/deploy.sh
   และมีระบบสลับรุ่นสำรองอัตโนมัติเมื่อ 429 — ดูยอดใช้จริงที่ `/api/health` ฟิลด์ `usage_7d`
 - ข้อความในกลุ่มชาเลนจ์ผ่านตัวกรองคำ (`WORKOUT_HINTS`) ก่อนถึง Gemini กันเปลืองโควตาในกลุ่มใหญ่
 - การแท็กชื่อใช้ `mention.mentionees` ต้องวางแท็กไว้ต้นข้อความเสมอ (index นับเป็น UTF-16)
+- **โหมดชาเลนจ์ไม่ประเมินเวลา/แคลอรี่ให้** แสดงเฉพาะที่เจ้าตัวบอกเองหรืออ่านจากหน้าจอในรูป
+  (เคยมีตาราง MET ให้ประเมิน แต่ถอดออกแล้ว เพราะแต่ละคนใช้เวลาไม่เท่ากัน ตัวเลขที่เดาทำให้เข้าใจผิด)
 
 ## ข้อควรระวัง
 
