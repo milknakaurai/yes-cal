@@ -123,7 +123,15 @@ geminiReply = { is_workout: true, activity: 'เวทเทรนนิ่ง',
 show('Peach พิมพ์ "เล่นเวท 45 นาที"', await send(textEvent('U_PEACH', 'เล่นเวท 45 นาที')));
 show('Peach พิมพ์ "สวัสดีตอนเช้า" (ต้องเงียบ)', await send(textEvent('U_PEACH', 'สวัสดีตอนเช้า')));
 show('Peach พิมพ์ "กินข้าวเมื่อวานอร่อยมาก" (ต้องเงียบ ไม่ย้ายวัน)', await send(textEvent('U_PEACH', 'กินข้าวเมื่อวานอร่อยมาก')));
-show('Peach พิมพ์ "ออกกำลังกาย" ในโหมดชาเลนจ์ (ต้องตอบวิธีใช้)', await send(textEvent('U_PEACH', 'ออกกำลังกาย')));
+show('Peach พิมพ์ "ออกกำลังกาย" ในโหมดชาเลนจ์ (ต้องขอรายละเอียด ไม่เช็คอิน)', await send(textEvent('U_PEACH', 'ออกกำลังกาย')));
+show('Peach พิมพ์ "ออกกำลัง" (คำสั้นกว่า ต้องกันได้เหมือนกัน)', await send(textEvent('U_PEACH', 'ออกกำลัง')));
+
+CURRENT_NAME = 'Pream';
+geminiReply = { is_workout: true, activity: 'วิ่ง' };
+show('Pream พิมพ์ "วิ่ง" เฉย ๆ (ไม่บอกจำนวน → ต้องขอรายละเอียด)', await send(textEvent('U_PREAM', 'วิ่ง')));
+geminiReply = { is_workout: true, activity: 'วิ่ง 5 กม.' };
+show('Pream พิมพ์ "วิ่ง 5 กม." (มีจำนวน → เช็คอินได้)', await send(textEvent('U_PREAM', 'วิ่ง 5 กม.')));
+CURRENT_NAME = 'Peach';
 
 CURRENT_NAME = 'Lek';
 geminiReply = { is_workout: true, activity: 'วิ่ง', has_screen_data: false };
