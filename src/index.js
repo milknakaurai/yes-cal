@@ -993,13 +993,33 @@ async function handleChallengeText(env, event, chatId, userId, text) {
     await env.DB.prepare("UPDATE chat_targets SET mode = 'calorie' WHERE id = ?").bind(chatId).run();
     return lineReply(env, event.replyToken, "สลับกลับเป็นโหมดนับแคลอรี่แล้วครับ 🍚");
   }
+  // บอกว่าเป็นของเมื่อวาน — ถ้าไม่มีรายละเอียดอื่น ถือว่าขอย้ายรายการล่าสุดย้อนหลัง
+  // ถ้ามีรายละเอียดด้วย (เช่น "เมื่อวานวิ่ง 5 กม.") ให้บันทึกใหม่ลงวันเมื่อวานเลย
+  let dateOverride = null;
+  if (isBackdateOnly(text)) return moveLastWorkoutBack(env, event, chatId, userId);
+  if (YESTERDAY_HINT.test(text) && looksLikeWorkout(text.replace(YESTERDAY_HINT, " "))) {
+    dateOverride = bkkDateOffset(-1);
+  }
+
   // กลุ่มใหญ่คุยกันเยอะ — กรองด้วยคำก่อน ไม่งั้นเปลืองโควตา Gemini และตอบมั่ว
   if (text.length > 120 || !looksLikeWorkout(text)) return;
 
   const result = await geminiWorkout(env, [{ text: workoutTextPrompt(text) }]);
   if (result?.__quota) return lineReply(env, event.replyToken, quotaText());
   if (!result?.is_workout) return; // คุยเล่นทั่วไป → เงียบไว้
-  return saveWorkoutAndReply(env, event, chatId, userId, result, "text");
+  return saveWorkoutAndReply(env, event, chatId, userId, result, "text", dateOverride);
+}
+
+// คำที่บอกว่ารายการนี้เป็นของเมื่อวาน (ส่งรูปย้อนหลัง / โพสต์ตอนเช้าแต่เล่นเมื่อคืน)
+const YESTERDAY_HINT = /เมื่อวาน(นี้)?|เมื่อคืน|วานนี้/;
+// คำเติมที่ตัดทิ้งได้ ใช้ดูว่าข้อความนั้น "พูดถึงเมื่อวานเฉย ๆ" หรือมีเนื้อหาอื่นด้วย
+const FILLER = /อันนี้|อันนั้น|อันนี่|รูปนี้|ภาพนี้|คือ|นะ|น่ะ|ครับ|ค่ะ|คะ|จ้า|จ้ะ|รูป|ภาพ|ของ|เป็น|นี่|นั่น|ที่|ส่ง|โพสต์|แก้|จริง\s*ๆ|เมื่อ|วาน|คืน|[\s.!?]/g;
+
+// ข้อความแบบ "อันนี้คือเมื่อคืน" = ขอย้ายรายการล่าสุด
+// ส่วน "กินข้าวเมื่อวานอร่อยมาก" = คุยเล่น ต้องไม่ไปยุ่งกับข้อมูลใคร
+function isBackdateOnly(text) {
+  if (text.length > 40 || !YESTERDAY_HINT.test(text)) return false;
+  return text.replace(YESTERDAY_HINT, " ").replace(FILLER, "").trim() === "";
 }
 
 // คำที่บ่งชี้ว่าอาจเป็นการรายงานออกกำลังกาย (กรองหยาบ ๆ ก่อนถาม AI)
@@ -1020,12 +1040,12 @@ async function handleChallengeImage(env, event, chatId, userId) {
   return saveWorkoutAndReply(env, event, chatId, userId, result, "image");
 }
 
-async function saveWorkoutAndReply(env, event, chatId, userId, result, source) {
-  const today = bkkToday();
+async function saveWorkoutAndReply(env, event, chatId, userId, result, source, dateOverride = null) {
+  const day = dateOverride || bkkToday();
   const name = await ensureMember(env, chatId, userId, event.source);
   const already = await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM workouts WHERE chat_id = ? AND line_user_id = ? AND logged_date = ?"
-  ).bind(chatId, userId, today).first();
+  ).bind(chatId, userId, day).first();
 
   await env.DB.prepare(
     `INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, logged_date)
@@ -1034,13 +1054,22 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source) {
     chatId, userId, String(result.activity || "ออกกำลังกาย").slice(0, 60),
     result.duration_min ? Math.round(result.duration_min) : null,
     result.kcal ? Math.round(result.kcal) : null,
-    source, today
+    source, day
   ).run();
 
   const detail = [
     result.duration_min ? `${Math.round(result.duration_min)} นาที` : null,
     result.kcal ? `${fmtNum(result.kcal)} kcal` : null,
   ].filter(Boolean).join(" · ");
+
+  if (dateOverride) {
+    return lineReply(env, event.replyToken, [
+      `บันทึกเป็นของเมื่อวาน (${thaiDateText(day)}) ให้แล้วครับ 📅`,
+      `${result.activity || "ออกกำลังกาย"}${detail ? " — " + detail : ""}`,
+      "",
+      "ของวันนี้ยังไม่นับนะ ออกแล้วส่งมาได้เลย 💪",
+    ].join("\n"));
+  }
 
   const streak = await getStreak(env, chatId, userId);
   const lines = [
@@ -1057,6 +1086,35 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source) {
   if (missing.length === 0 && done.length > 0) lines.push("", J.pick(J.ALL_DONE));
   else if (missing.length > 0) lines.push("", `เหลืออีก ${missing.length} คนที่ยังไม่ออกวันนี้`);
 
+  return lineReply(env, event.replyToken, lines.join("\n"));
+}
+
+// ย้ายรายการเช็คอินล่าสุดของวันนี้ ไปเป็นของเมื่อวาน
+async function moveLastWorkoutBack(env, event, chatId, userId) {
+  const today = bkkToday();
+  const yesterday = bkkDateOffset(-1);
+  const last = await env.DB.prepare(
+    `SELECT id, activity FROM workouts
+     WHERE chat_id = ? AND line_user_id = ? AND logged_date = ? ORDER BY id DESC LIMIT 1`
+  ).bind(chatId, userId, today).first();
+
+  if (!last) {
+    return lineReply(env, event.replyToken,
+      `วันนี้ยังไม่มีรายการของคุณให้ย้ายครับ 🤔\n\n` +
+      `ถ้าจะบันทึกของเมื่อวาน พิมพ์พร้อมรายละเอียดได้เลย เช่น "เมื่อวานวิ่ง 5 กม."`);
+  }
+
+  await env.DB.prepare("UPDATE workouts SET logged_date = ? WHERE id = ?")
+    .bind(yesterday, last.id).run();
+
+  const { done, missing } = await getTodayStatus(env, chatId);
+  const lines = [
+    `ย้าย "${last.activity}" ไปเป็นของเมื่อวาน (${thaiDateText(yesterday)}) แล้วครับ 📅`,
+    "",
+    missing.length
+      ? `วันนี้เลยยังไม่นับนะ — เหลืออีก ${missing.length} คนที่ยังไม่ออก (รวมคุณด้วยถ้ายังไม่ได้เช็คอินวันนี้)`
+      : "วันนี้ทุกคนเช็คอินครบแล้ว 🎉",
+  ];
   return lineReply(env, event.replyToken, lines.join("\n"));
 }
 
@@ -1222,6 +1280,7 @@ function challengeHelpText() {
     "เข้าร่วม — สมัครเข้าชาเลนจ์ (พิมพ์กันคนละครั้ง)",
     "วันนี้ — ดูว่าใครออกแล้ว ใครยังไม่ออก",
     "สมาชิก — ดูรายชื่อคนที่เข้าร่วมทั้งหมด",
+    "เมื่อวาน — ย้ายรายการล่าสุดไปเป็นของเมื่อวาน (ส่งรูปย้อนหลัง)",
     "เตือน — แท็กชื่อคนที่ยังไม่ออก (เด้งแจ้งเตือนถึงตัว)",
     "อันดับ — ตารางคะแนน 7 วันล่าสุด",
     "ออกจากชาเลนจ์ — ถอนตัว",
