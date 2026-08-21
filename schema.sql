@@ -75,3 +75,12 @@ CREATE TABLE IF NOT EXISTS workouts (
 );
 CREATE INDEX IF NOT EXISTS idx_workouts_chat_date ON workouts(chat_id, logged_date);
 CREATE INDEX IF NOT EXISTS idx_workouts_member ON workouts(chat_id, line_user_id, logged_date);
+
+-- นับการเรียก API รายวัน ไว้ดูว่าใช้โควตาฟรีไปเท่าไหร่ (ดูผลที่ /api/health)
+CREATE TABLE IF NOT EXISTS api_usage (
+  day TEXT NOT NULL,            -- YYYY-MM-DD (เวลาไทย)
+  kind TEXT NOT NULL,           -- 'gemini' | 'push'
+  label TEXT NOT NULL DEFAULT '',-- ชื่อรุ่น Gemini / ประเภท push
+  n INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, kind, label)
+);

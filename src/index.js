@@ -626,6 +626,7 @@ async function geminiJson(env, parts, schema) {
   let quotaHit = false;
 
   for (const model of models) {
+    await countUsage(env, "gemini", model);
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
@@ -686,6 +687,7 @@ async function lineReply(env, replyToken, text, mention) {
 }
 
 async function linePush(env, to, text, mention) {
+  await countUsage(env, "push", "line");
   const message = { type: "text", text: text.slice(0, 4900) };
   if (mention?.mentionees?.length) message.mention = mention;
   const res = await fetch(`${LINE_API}/message/push`, {
@@ -782,6 +784,13 @@ async function handleApi(url, request, env) {
     } catch (e) {
       report.line_status = "fetch_error: " + e.message;
     }
+    try {
+      report.usage_7d = (await env.DB.prepare(
+        `SELECT day, kind, label, n FROM api_usage WHERE day >= ? ORDER BY day DESC, kind`
+      ).bind(lastNDates(7)[0]).all()).results;
+    } catch (e) {
+      report.usage_7d = "error: " + e.message;
+    }
     return jsonResponse(report);
   }
 
@@ -835,6 +844,17 @@ function jsonResponse(obj, status = 200) {
 }
 
 // ---------------------------------------------------------------- utils
+
+async function countUsage(env, kind, label = "") {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO api_usage (day, kind, label, n) VALUES (?, ?, ?, 1)
+       ON CONFLICT(day, kind, label) DO UPDATE SET n = n + 1`
+    ).bind(bkkToday(), kind, label).run();
+  } catch (e) {
+    console.error("countUsage failed", e.message);
+  }
+}
 
 async function fetchLineImage(env, messageId) {
   const res = await fetch(`${LINE_DATA_API}/message/${messageId}/content`, {
