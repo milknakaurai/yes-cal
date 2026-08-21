@@ -1350,8 +1350,9 @@ function buildNudge(done, missing) {
     mentionees.push({ index: head.length, length: label.length, userId: m.line_user_id });
     head += label + " ";
   }
-  const rest = tagged.length < missing.length ? `และอีก ${missing.length - tagged.length} คน` : "";
-  const text = `${head}${rest}\n\n${J.pick(J.NUDGE)(hoursLeftToday())}\n\n` + todayStatusText(done, missing);
+  // ตัดช่องว่างท้ายแท็กทิ้ง (ตัดท้ายไม่กระทบ index ของแท็กที่อยู่ก่อนหน้า)
+  const rest = tagged.length < missing.length ? ` และอีก ${missing.length - tagged.length} คน` : "";
+  const text = `${head.trimEnd()}${rest}\n\n${J.pick(J.NUDGE)(hoursLeftToday())}\n\n` + todayStatusText(done, missing);
   return { text, mention: { mentionees } };
 }
 

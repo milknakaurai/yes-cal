@@ -57,6 +57,8 @@ bash scripts/deploy.sh
 - คุยกับเจ้าของเป็น**ภาษาไทย**
 - ทำงานบน branch `claude/line-calorie-tracker-jmgcyz` เท่านั้น commit + push ทุกครั้งที่แก้เสร็จ
 - อย่า commit ค่า secret ลง repo (มี `.gitignore` กัน `.dev.vars` ไว้แล้ว)
+- **ทดสอบก่อน deploy ได้ด้วย `node scripts/e2e-test.mjs`** — จำลอง D1 ด้วย SQLite ในหน่วยความจำ (สร้างตารางจาก `schema.sql` จริง)
+  แล้วยิง webhook event เหมือน LINE ส่งมา จับ SQL ผิด/ฟิลด์หายได้ทันที ควรรันทุกครั้งที่แก้ตรรกะโหมดชาเลนจ์
 - ทดสอบ dashboard ในเครื่องได้โดยเสิร์ฟ `public/index.html` คู่กับ mock `/api/overview` — `wrangler dev` (workerd) รันไม่ขึ้นบนเครื่องเจ้าของ
 
 ## ถ้าเจ้าของบอกว่า "บอทไม่ทำงาน"
