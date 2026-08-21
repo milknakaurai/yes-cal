@@ -94,7 +94,7 @@ CURRENT_NAME = 'Peach';
 show('Peach พิมพ์ "เข้าร่วม"', await send(textEvent('U_PEACH', 'เข้าร่วม')));
 
 CURRENT_NAME = 'Erk Sasin';
-geminiReply = { is_workout: true, activity: 'กอล์ฟ', duration_min: 60, kcal: 240 };
+geminiReply = { is_workout: true, activity: 'กอล์ฟ', duration_min: 60, kcal: 240, has_screen_data: true };
 const erkImg = imageEvent('U_ERK');
 show('Erk ส่งรูปกอล์ฟ (ยังไม่ได้สมัคร → เพิ่มให้อัตโนมัติ)', await send(erkImg));
 
@@ -106,24 +106,29 @@ show('Milk แท็ก "@Erk Sasin เมื่อวาน"', await send(textE
 show('Milk พิมพ์ "วันนี้" อีกครั้ง (Erk ต้องกลับไปอยู่ฝั่งยังไม่ออก)', await send(textEvent('U_MILK', 'วันนี้')));
 
 CURRENT_NAME = 'Erk Sasin';
-geminiReply = { is_workout: true, activity: 'วิ่ง', duration_min: 30, kcal: 300 };
+geminiReply = { is_workout: true, activity: 'วิ่ง', duration_min: 30, kcal: 300, has_screen_data: true };
 const erkImg2 = imageEvent('U_ERK');
 show('Erk ส่งรูปวิ่ง (ของวันนี้)', await send(erkImg2));
 show('Milk reply ที่รูปวิ่ง + "อันนี้คือเมื่อคืน"', await send(textEvent('U_MILK', 'อันนี้คือเมื่อคืน', { quotedMessageId: erkImg2.message.id })));
 
 CURRENT_NAME = 'Peach';
-geminiReply = { is_workout: true, activity: 'ว่ายน้ำ', duration_min: 40, kcal: 320 };
+geminiReply = { is_workout: true, activity: 'ว่ายน้ำ', duration_min: 40, kcal: 320, has_screen_data: true };
 await send(imageEvent('U_PEACH'));
 const botMsgId = lastBotMessageId;
 CURRENT_NAME = 'Milk';
 show('Milk reply ที่ "ข้อความของบอท" + "เมื่อวาน"', await send(textEvent('U_MILK', 'เมื่อวาน', { quotedMessageId: botMsgId })));
 
 CURRENT_NAME = 'Peach';
-geminiReply = { is_workout: true, activity: 'เวทเทรนนิ่ง', duration_min: 45, kcal: 280 };
+geminiReply = { is_workout: true, activity: 'เวทเทรนนิ่ง', duration_min: 45, kcal: 280, has_screen_data: true };
 show('Peach พิมพ์ "เล่นเวท 45 นาที"', await send(textEvent('U_PEACH', 'เล่นเวท 45 นาที')));
 show('Peach พิมพ์ "สวัสดีตอนเช้า" (ต้องเงียบ)', await send(textEvent('U_PEACH', 'สวัสดีตอนเช้า')));
 show('Peach พิมพ์ "กินข้าวเมื่อวานอร่อยมาก" (ต้องเงียบ ไม่ย้ายวัน)', await send(textEvent('U_PEACH', 'กินข้าวเมื่อวานอร่อยมาก')));
 show('Peach พิมพ์ "ออกกำลังกาย" ในโหมดชาเลนจ์ (ต้องตอบวิธีใช้)', await send(textEvent('U_PEACH', 'ออกกำลังกาย')));
+
+CURRENT_NAME = 'Lek';
+geminiReply = { is_workout: true, activity: 'วิ่ง', has_screen_data: false };
+show('Lek ส่งรูปลู่วิ่งเปล่า ๆ (ไม่มีตัวเลข → ต้องไม่เช็คอิน)', await send(imageEvent('U_LEK')));
+show('Milk พิมพ์ "วันนี้" (Lek ต้องยังไม่ถูกนับ)', await send(textEvent('U_MILK', 'วันนี้')));
 
 CURRENT_NAME = 'Milk';
 show('Milk พิมพ์ "เตือน" (แท็กคนที่ยังไม่ออก)', await send(textEvent('U_MILK', 'เตือน')));
