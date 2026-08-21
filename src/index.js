@@ -996,8 +996,12 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   // บอกว่าเป็นของเมื่อวาน — ถ้าไม่มีรายละเอียดอื่น ถือว่าขอย้ายรายการล่าสุดย้อนหลัง
   // ถ้ามีรายละเอียดด้วย (เช่น "เมื่อวานวิ่ง 5 กม.") ให้บันทึกใหม่ลงวันเมื่อวานเลย
   let dateOverride = null;
-  if (isBackdateOnly(text)) {
-    return moveLastWorkoutBack(env, event, chatId, userId, event.message?.quotedMessageId);
+  const mentionees = event.message?.mention?.mentionees || [];
+  if (isBackdateOnly(stripMentions(text, mentionees))) {
+    return moveLastWorkoutBack(env, event, chatId, userId, {
+      quotedMessageId: event.message?.quotedMessageId,
+      mentionedIds: mentionees.map((m) => m.userId).filter(Boolean),
+    });
   }
   if (YESTERDAY_HINT.test(text) && looksLikeWorkout(text.replace(YESTERDAY_HINT, " "))) {
     dateOverride = bkkDateOffset(-1);
@@ -1016,6 +1020,16 @@ async function handleChallengeText(env, event, chatId, userId, text) {
 const YESTERDAY_HINT = /เมื่อวาน(นี้)?|เมื่อคืน|วานนี้/;
 // คำเติมที่ตัดทิ้งได้ ใช้ดูว่าข้อความนั้น "พูดถึงเมื่อวานเฉย ๆ" หรือมีเนื้อหาอื่นด้วย
 const FILLER = /อันนี้|อันนั้น|อันนี่|รูปนี้|ภาพนี้|คือ|นะ|น่ะ|ครับ|ค่ะ|คะ|จ้า|จ้ะ|รูป|ภาพ|ของ|เป็น|นี่|นั่น|ที่|ส่ง|โพสต์|แก้|จริง\s*ๆ|เมื่อ|วาน|คืน|[\s.!?]/g;
+
+// ตัดช่วงที่เป็นแท็ก @ชื่อ ออกจากข้อความ (ไล่จากท้ายมาหน้าเพื่อไม่ให้ index เพี้ยน)
+function stripMentions(text, mentionees) {
+  if (!mentionees?.length) return text;
+  let out = text;
+  [...mentionees].sort((a, b) => b.index - a.index).forEach((m) => {
+    out = out.slice(0, m.index) + " " + out.slice(m.index + m.length);
+  });
+  return out.trim();
+}
 
 // ข้อความแบบ "อันนี้คือเมื่อคืน" = ขอย้ายรายการล่าสุด
 // ส่วน "กินข้าวเมื่อวานอร่อยมาก" = คุยเล่น ต้องไม่ไปยุ่งกับข้อมูลใคร
@@ -1094,11 +1108,22 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
 // ย้ายรายการเช็คอินไปเป็นของเมื่อวาน
 // ถ้า reply (quote) มาที่ข้อความ/รูปไหน จะย้ายรายการของข้อความนั้น — ช่วยแก้ให้เพื่อนได้
 // ถ้าไม่ได้ reply มา จะย้ายรายการล่าสุดของคนที่พิมพ์เอง
-async function moveLastWorkoutBack(env, event, chatId, userId, quotedMessageId = null) {
+async function moveLastWorkoutBack(env, event, chatId, userId, opts = {}) {
   const today = bkkToday();
   const yesterday = bkkDateOffset(-1);
+  const { quotedMessageId = null, mentionedIds = [] } = opts;
+
+  const latestOf = (uid) => env.DB.prepare(
+    `SELECT w.id, w.activity, w.logged_date, m.display_name
+     FROM workouts w LEFT JOIN challenge_members m
+       ON m.chat_id = w.chat_id AND m.line_user_id = w.line_user_id
+     WHERE w.chat_id = ? AND w.line_user_id = ? AND w.logged_date = ?
+     ORDER BY w.id DESC LIMIT 1`
+  ).bind(chatId, uid, today).first();
 
   let target = null;
+
+  // 1) reply (quote) มาที่รูปไหน → รายการของรูปนั้น
   if (quotedMessageId) {
     target = await env.DB.prepare(
       `SELECT w.id, w.activity, w.logged_date, m.display_name
@@ -1107,20 +1132,20 @@ async function moveLastWorkoutBack(env, event, chatId, userId, quotedMessageId =
        WHERE w.chat_id = ? AND w.message_id = ? LIMIT 1`
     ).bind(chatId, quotedMessageId).first();
   }
-  if (!target) {
-    target = await env.DB.prepare(
-      `SELECT w.id, w.activity, w.logged_date, m.display_name
-       FROM workouts w LEFT JOIN challenge_members m
-         ON m.chat_id = w.chat_id AND m.line_user_id = w.line_user_id
-       WHERE w.chat_id = ? AND w.line_user_id = ? AND w.logged_date = ?
-       ORDER BY w.id DESC LIMIT 1`
-    ).bind(chatId, userId, today).first();
+  // 2) แท็กชื่อใครไว้ → รายการล่าสุดของคนแรกที่มีเช็คอินวันนี้ (ข้ามแท็กบอทเอง)
+  for (const uid of mentionedIds) {
+    if (target) break;
+    if (uid === userId) continue;
+    target = await latestOf(uid);
   }
+  // 3) ไม่ได้ระบุใคร → รายการล่าสุดของคนที่พิมพ์
+  if (!target) target = await latestOf(userId);
 
   if (!target) {
     return lineReply(env, event.replyToken,
       `ไม่เจอรายการให้ย้ายครับ 🤔\n\n` +
-      `ลอง reply ที่รูปเช็คอินนั้นแล้วพิมพ์ "เมื่อวาน"\n` +
+      `ลองแท็กชื่อเจ้าตัวแล้วพิมพ์ "เมื่อวาน" (เช่น @Erk เมื่อวาน)\n` +
+      `หรือ reply ที่รูปเช็คอินนั้นแล้วพิมพ์ "เมื่อวาน"\n` +
       `หรือบันทึกใหม่พร้อมรายละเอียด เช่น "เมื่อวานวิ่ง 5 กม."`);
   }
   if (target.logged_date === yesterday) {
@@ -1305,7 +1330,7 @@ function challengeHelpText() {
     "วันนี้ — ดูว่าใครออกแล้ว ใครยังไม่ออก",
     "สมาชิก — ดูรายชื่อคนที่เข้าร่วมทั้งหมด",
     "เมื่อวาน — ย้ายรายการล่าสุดไปเป็นของเมื่อวาน",
-    "   (reply ที่รูปของใครแล้วพิมพ์ \"เมื่อวาน\" ก็แก้ให้คนนั้นได้)",
+    "   (แท็กชื่อเพื่อน หรือ reply ที่รูปเขา แล้วพิมพ์ \"เมื่อวาน\" ก็แก้ให้เขาได้)",
     "เตือน — แท็กชื่อคนที่ยังไม่ออก (เด้งแจ้งเตือนถึงตัว)",
     "อันดับ — ตารางคะแนน 7 วันล่าสุด",
     "ออกจากชาเลนจ์ — ถอนตัว",
