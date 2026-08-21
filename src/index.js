@@ -2,6 +2,7 @@
 // Cloudflare Worker: LINE webhook + Gemini calorie estimation + D1 + dashboard API + nightly cron
 
 import { NUTRITION_HINTS } from "./food-reference.js";
+import * as J from "./jokes.js";
 
 const LINE_API = "https://api.line.me/v2/bot";
 const LINE_DATA_API = "https://api-data.line.me/v2/bot";
@@ -406,12 +407,14 @@ function statusLine(user, totals) {
   }
   const diff = user.target_kcal - kcalToday;
   const lines = [`วันนี้ ${user.display_name}: ${fmtNum(kcalToday)} / ${fmtNum(user.target_kcal)} kcal`];
-  lines.push(diff >= 0 ? `เหลืออีก ${fmtNum(diff)} kcal` : `เกินเป้า ${fmtNum(-diff)} kcal แล้วนะ 😅`);
+  lines.push(diff >= 0 ? `เหลืออีก ${fmtNum(diff)} kcal` : J.pick(J.OVER_TARGET)(fmtNum(-diff)));
 
   const pt = proteinTarget(user);
   if (pt) {
     const p = Math.round(totals.protein_g || 0);
-    lines.push(p >= pt ? `โปรตีน ${p}/${pt} g ครบแล้ว 💪` : `โปรตีน ${p}/${pt} g — ขาดอีก ${pt - p} g`);
+    lines.push(p >= pt
+      ? `โปรตีน ${p}/${pt} g — ${J.pick(J.PROTEIN_DONE)}`
+      : `โปรตีน ${p}/${pt} g — ขาดอีก ${pt - p} g`);
   }
   return lines.join("\n");
 }
@@ -1000,13 +1003,17 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source) {
 
   const streak = await getStreak(env, chatId, userId);
   const lines = [
-    already.n > 0 ? `${name} ซ้อมรอบที่ ${already.n + 1} ของวันนี้! 🔥` : `เช็คอินแล้ว ${name} 💪`,
+    already.n > 0
+      ? J.pick(J.CHECKIN_AGAIN)(name, already.n + 1)
+      : J.pick(J.CHECKIN)(name),
     `${result.activity || "ออกกำลังกาย"}${detail ? " — " + detail : ""}`,
   ];
-  if (already.n === 0 && streak > 1) lines.push(`ต่อเนื่อง ${streak} วันติด 🔥`);
+  if (already.n === 0 && streak > 1) {
+    lines.push(J.pick(streak >= 7 ? J.STREAK_BIG : J.STREAK)(streak));
+  }
 
   const { done, missing } = await getTodayStatus(env, chatId);
-  if (missing.length === 0 && done.length > 0) lines.push("", "วันนี้ครบทุกคนแล้ว! 🎉");
+  if (missing.length === 0 && done.length > 0) lines.push("", J.pick(J.ALL_DONE));
   else if (missing.length > 0) lines.push("", `เหลืออีก ${missing.length} คนที่ยังไม่ออกวันนี้`);
 
   return lineReply(env, event.replyToken, lines.join("\n"));
@@ -1035,14 +1042,14 @@ async function joinChallenge(env, event, chatId, userId) {
     "SELECT COUNT(*) AS n FROM challenge_members WHERE chat_id = ? AND active = 1"
   ).bind(chatId).first();
   return lineReply(env, event.replyToken,
-    `ยินดีต้อนรับ ${name} 🎉\nตอนนี้มีสมาชิก ${total.n} คนในชาเลนจ์\n\nออกกำลังกายเสร็จส่งรูปมาได้เลยครับ 📸`);
+    `${J.pick(J.JOIN)(name, total.n)}\n\nออกกำลังกายเสร็จส่งรูปมาได้เลยครับ 📸`);
 }
 
 async function leaveChallenge(env, event, chatId, userId) {
   await env.DB.prepare(
     "UPDATE challenge_members SET active = 0 WHERE chat_id = ? AND line_user_id = ?"
   ).bind(chatId, userId).run();
-  return lineReply(env, event.replyToken, "ออกจากชาเลนจ์แล้วครับ พิมพ์ \"เข้าร่วม\" กลับมาได้ตลอด 👋");
+  return lineReply(env, event.replyToken, J.pick(J.LEAVE));
 }
 
 // รายชื่อคนที่ออก/ยังไม่ออกวันนี้
@@ -1097,8 +1104,9 @@ function todayStatusText(done, missing, withNudge = false) {
     lines.push("   " + missing.map((m) => m.display_name).join(", "));
     if (withNudge) lines.push("", "เหลือเวลาอีก 3 ชั่วโมง ส่งรูปมาได้เลย 💪");
   } else {
-    lines.push("ครบทุกคนแล้ว! เก่งมาก 🎉🔥");
+    lines.push(J.pick(J.ALL_DONE));
   }
+  if (!done.length && missing.length) lines.push("", J.pick(J.NOBODY_YET));
   return lines.join("\n");
 }
 
@@ -1119,7 +1127,7 @@ async function replyLeaderboard(env, event, chatId) {
   const medals = ["🥇", "🥈", "🥉"];
   const lines = ["อันดับ 7 วันล่าสุด 🏆", ""];
   rows.forEach((r, i) => {
-    const mark = r.week_days === 0 ? "  " : medals[i] || `${i + 1}.`;
+    const mark = r.week_days === 0 ? J.pick(J.RANK_TAIL) : medals[i] || `${i + 1}.`;
     lines.push(`${mark} ${r.display_name} — ${r.week_days}/7 วัน (รวม ${r.total_days})`);
   });
   return lineReply(env, event.replyToken, lines.join("\n"));
@@ -1180,8 +1188,7 @@ function buildNudge(done, missing) {
     head += label + " ";
   }
   const rest = tagged.length < missing.length ? `และอีก ${missing.length - tagged.length} คน` : "";
-  const text = `${head}${rest}\n\nยังไม่ออกกำลังกายวันนี้นะ เหลืออีก 3 ชั่วโมง 💪\n\n` +
-    todayStatusText(done, missing);
+  const text = `${head}${rest}\n\n${J.pick(J.NUDGE)}\n\n` + todayStatusText(done, missing);
   return { text, mention: { mentionees } };
 }
 
