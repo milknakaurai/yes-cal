@@ -1,20 +1,17 @@
 # Yes Cal — คู่มือสำหรับ Claude session ถัดไป
 
-LINE chatbot นับแคลอรี่สำหรับสองคน (เจ้าของ repo + แฟน) รันบน Cloudflare Worker + D1 + Gemini
-รายละเอียดฟีเจอร์และคำสั่งในแชทอยู่ใน `README.md`
+LINE bot 2 โหมดในตัวเดียว รันบน Cloudflare Worker + D1 + Gemini
+- **โหมดแคลอรี่** (ค่าเริ่มต้น) — นับแคล/โปรตีนจากข้อความและรูปอาหาร สำหรับกลุ่มบ้าน
+- **โหมดชาเลนจ์** — เช็คอินออกกำลังกายจากรูป + ทวงคนที่ยังไม่ออกตอน 22:00 สำหรับกลุ่มเพื่อน
+รายละเอียดคำสั่งทั้งหมดอยู่ใน `README.md`
 
-## สถานะตอนนี้
+## สถานะตอนนี้ (20 ส.ค. 2026)
 
-**Deploy แล้ว** (18 ส.ค. 2026 จากเครื่องเจ้าของ ผ่าน `wrangler login`): https://yes-cal.sales-a5c.workers.dev
-D1 สร้างตารางแล้ว / secrets `GEMINI_API_KEY` + `DASHBOARD_KEY` (=yescal2569) ตั้งแล้ว
+**ใช้งานจริงแล้ว**: https://yes-cal.sales-a5c.workers.dev · secret ครบทั้ง 4 ตัว (`DASHBOARD_KEY` = yescal2569)
+เจ้าของ deploy เองจากเครื่อง Windows ด้วย `wrangler login` (Command Prompt โฟลเดอร์ `yes-cal`)
 
-| ของที่ต้องใช้ | สถานะ |
-|---|---|
-| Cloudflare API token | ✅ มีแล้ว (ต้องอยู่ใน env `CLOUDFLARE_API_TOKEN`) |
-| Gemini API key | ✅ มีแล้ว ทดสอบยิงจริงผ่าน ตั้งเป็น secret แล้ว |
-| LINE Channel secret / access token | ⛔ เจ้าของยังไม่ได้สร้าง Messaging API channel — ชิ้นสุดท้ายที่ค้าง |
-
-เหลือ: สร้าง LINE OA + Messaging API channel → ตั้ง secret 2 ตัว (`LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKEN`) → ตั้ง Webhook URL = `https://yes-cal.sales-a5c.workers.dev/webhook` (ต้องตั้ง secret ก่อนกด Verify) → เชิญบอทเข้ากลุ่ม
+ผู้ใช้โหมดแคลอรี่: Milk (muscle) · Charlie:P (fatloss) · Wisith (muscle)
+โหมดชาเลนจ์: กำลังเริ่มกับกลุ่มเพื่อน 7 คน
 
 ## วิธี deploy
 
@@ -39,10 +36,21 @@ bash scripts/deploy.sh
 
 ## โครงสร้าง
 
-- `src/index.js` — Worker ทั้งหมด: LINE webhook + Gemini + D1 + dashboard API (`/api/overview`) + cron 21:00 ไทย (14:00 UTC)
+- `src/index.js` — Worker ทั้งหมด: LINE webhook + Gemini + D1 + dashboard API (`/api/overview`) + cron 22:00 ไทย (15:00 UTC) เตือนกลุ่มชาเลนจ์
 - `public/index.html` — dashboard หน้าเดียว ไม่มี dependency ภายนอก รองรับ dark mode
-- `schema.sql` — ตาราง users / meals / weights / chat_targets
+- `src/food-reference.js` — ตารางค่าโภชนาการอาหารไทย ~40 เมนู ที่ให้ Gemini ยึดก่อนประเมินเอง
+- `src/jokes.js` — คลังมุกของบอท สุ่มทุกครั้ง (ล้อความขี้เกียจได้ ห้ามล้อรูปร่าง/น้ำหนัก)
+- `schema.sql` — users / meals / weights / chat_targets / challenge_members / workouts / api_usage
 - `scripts/deploy.sh` — deploy ครบจบในสคริปต์เดียว
+
+## หมายเหตุการออกแบบที่สำคัญ
+
+- **push มีแค่ตัวเดียว** (ทวงชาเลนจ์ 22:00) ฝั่งแคลอรี่ตั้งใจไม่ push เพราะ LINE จำกัดโควตา push
+  ส่วน reply ฟรีไม่จำกัด — ฟีเจอร์ใหม่ควรทำเป็น reply เสมอถ้าเลือกได้
+- **Gemini free tier จำกัดต่อรุ่นต่อวัน** (2.5-flash = 20 ครั้ง/วัน) จึงใช้ `gemini-3.5-flash-lite` เป็นรุ่นหลัก
+  และมีระบบสลับรุ่นสำรองอัตโนมัติเมื่อ 429 — ดูยอดใช้จริงที่ `/api/health` ฟิลด์ `usage_7d`
+- ข้อความในกลุ่มชาเลนจ์ผ่านตัวกรองคำ (`WORKOUT_HINTS`) ก่อนถึง Gemini กันเปลืองโควตาในกลุ่มใหญ่
+- การแท็กชื่อใช้ `mention.mentionees` ต้องวางแท็กไว้ต้นข้อความเสมอ (index นับเป็น UTF-16)
 
 ## ข้อควรระวัง
 

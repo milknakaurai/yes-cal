@@ -41,9 +41,10 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // 15:00 UTC = 22:00 ไทย → เตือนกลุ่มชาเลนจ์ · 14:00 UTC = 21:00 ไทย → สรุปแคลอรี่
+    // 15:00 UTC = 22:00 ไทย → เตือนกลุ่มชาเลนจ์
+    // 14:00 UTC = 21:00 ไทย → สรุปแคลอรี่ (ปิดอยู่ เปิดได้โดยเพิ่ม cron ใน wrangler.toml)
     ctx.waitUntil(
-      event.cron === "0 15 * * *" ? pushChallengeReminder(env) : pushNightlySummary(env)
+      event.cron === "0 14 * * *" ? pushNightlySummary(env) : pushChallengeReminder(env)
     );
   },
 };
@@ -90,7 +91,7 @@ async function handleEvents(events, env) {
 }
 
 async function handleEvent(event, env) {
-  // จำห้องแชทไว้สำหรับ push สรุปตอน 21:00
+  // จำห้องแชทไว้สำหรับส่งข้อความเตือนตามเวลา
   if (event.source) await rememberChatTarget(env, event.source);
 
   if (event.type === "join" || event.type === "follow") {
@@ -198,7 +199,7 @@ function helpText() {
     "🧹 ล้างวันนี้ — ลบรายการอาหารวันนี้ทั้งหมด (เฉพาะของตัวเอง)",
     "🎯 เป้าหมาย — ดูเป้าที่ตั้งไว้",
     "",
-    "ทุกวัน 21:00 ผมจะสรุปให้อัตโนมัติครับ 🌙",
+    "อยากดูยอดเมื่อไหร่พิมพ์ \"สรุป\" ได้เลยครับ 🌙",
   ].join("\n");
 }
 
@@ -526,7 +527,8 @@ async function replyWeekSummary(env, event) {
   return lineReply(env, event.replyToken, `7 วันล่าสุด 📅\n\n${blocks.join("\n\n")}\n\nดูกราฟเต็ม ๆ ที่หน้าเว็บได้นะครับ 📈`);
 }
 
-// cron 21:00 ไทย — push สรุปเข้าแชท
+// push สรุปแคลอรี่เข้าแชท — ปิดอยู่ (ไม่มี cron 14:00 UTC ใน wrangler.toml)
+// เปิดใหม่ได้โดยเพิ่ม "0 14 * * *" กลับเข้า crons
 async function pushNightlySummary(env) {
   const targets = (await env.DB.prepare(
     "SELECT id FROM chat_targets WHERE type IN ('group','room') AND COALESCE(mode,'calorie') = 'calorie'"
