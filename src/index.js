@@ -41,9 +41,9 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // 13:00 UTC = 20:00 ไทย → เตือนกลุ่มชาเลนจ์ · 14:00 UTC = 21:00 ไทย → สรุปแคลอรี่
+    // 15:00 UTC = 22:00 ไทย → เตือนกลุ่มชาเลนจ์ · 14:00 UTC = 21:00 ไทย → สรุปแคลอรี่
     ctx.waitUntil(
-      event.cron === "0 13 * * *" ? pushChallengeReminder(env) : pushNightlySummary(env)
+      event.cron === "0 15 * * *" ? pushChallengeReminder(env) : pushNightlySummary(env)
     );
   },
 };
@@ -867,6 +867,13 @@ async function fetchLineImage(env, messageId) {
   };
 }
 
+// เหลืออีกกี่ชั่วโมงก่อนหมดวัน (เวลาไทย) — อย่างน้อย 1 เพื่อไม่ให้ข้อความอ่านแล้วแปลก
+function hoursLeftToday() {
+  const bkk = new Date(Date.now() + 7 * 3600 * 1000);
+  const minsLeft = 24 * 60 - (bkk.getUTCHours() * 60 + bkk.getUTCMinutes());
+  return Math.max(1, Math.round(minsLeft / 60));
+}
+
 // วันที่เวลาไทย ถอย/เดินหน้า n วัน (0 = วันนี้)
 function bkkDateOffset(n) {
   return new Date(Date.now() + 7 * 3600 * 1000 + n * 86400 * 1000).toISOString().slice(0, 10);
@@ -1122,7 +1129,7 @@ function todayStatusText(done, missing, withNudge = false) {
   if (missing.length) {
     lines.push(`⏳ ยังไม่ออก ${missing.length} คน`);
     lines.push("   " + missing.map((m) => m.display_name).join(", "));
-    if (withNudge) lines.push("", "เหลือเวลาอีก 3 ชั่วโมง ส่งรูปมาได้เลย 💪");
+    if (withNudge) lines.push("", `เหลือเวลาอีก ${hoursLeftToday()} ชั่วโมง ส่งรูปมาได้เลย 💪`);
   } else {
     lines.push(J.pick(J.ALL_DONE));
   }
@@ -1160,12 +1167,12 @@ function challengeWelcomeText() {
     "ทุกคนในกลุ่มพิมพ์ \"เข้าร่วม\" คนละครั้งเพื่อสมัครก่อนนะครับ",
     "จากนั้นออกกำลังกายเสร็จก็ส่งรูปมาได้เลย — บอทอ่านรูปแล้วเช็คอินให้อัตโนมัติ",
     "",
-    "ทุกวัน 20:00 ผมจะประกาศว่าใครยังไม่ออก ⏰",
+    "ทุกวัน 22:00 ผมจะประกาศว่าใครยังไม่ออก ⏰",
     "พิมพ์ \"คำสั่ง\" เพื่อดูวิธีใช้ทั้งหมด",
   ].join("\n");
 }
 
-// เรียกเตือนแบบแท็กชื่อเองได้ ไม่ต้องรอ 20:00 (reply ไม่กินโควตาข้อความ)
+// เรียกเตือนแบบแท็กชื่อเองได้ ไม่ต้องรอ 22:00 (reply ไม่กินโควตาข้อความ)
 async function replyNudge(env, event, chatId) {
   const { done, missing } = await getTodayStatus(env, chatId);
   if (!done.length && !missing.length) {
@@ -1192,7 +1199,7 @@ function challengeHelpText() {
     "อันดับ — ตารางคะแนน 7 วันล่าสุด",
     "ออกจากชาเลนจ์ — ถอนตัว",
     "",
-    "ทุกวัน 20:00 บอทจะเตือนคนที่ยังไม่ออกให้เองครับ ⏰",
+    "ทุกวัน 22:00 บอทจะเตือนคนที่ยังไม่ออกให้เองครับ ⏰",
   ].join("\n");
 }
 
@@ -1208,11 +1215,11 @@ function buildNudge(done, missing) {
     head += label + " ";
   }
   const rest = tagged.length < missing.length ? `และอีก ${missing.length - tagged.length} คน` : "";
-  const text = `${head}${rest}\n\n${J.pick(J.NUDGE)}\n\n` + todayStatusText(done, missing);
+  const text = `${head}${rest}\n\n${J.pick(J.NUDGE)(hoursLeftToday())}\n\n` + todayStatusText(done, missing);
   return { text, mention: { mentionees } };
 }
 
-// cron 20:00 ไทย — เตือนคนที่ยังไม่ออกกำลังกาย
+// cron 22:00 ไทย — เตือนคนที่ยังไม่ออกกำลังกาย
 async function pushChallengeReminder(env) {
   const groups = (await env.DB.prepare(
     "SELECT id FROM chat_targets WHERE mode = 'challenge'"
