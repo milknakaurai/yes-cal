@@ -999,7 +999,7 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   const mentionees = event.message?.mention?.mentionees || [];
   if (isBackdateOnly(stripMentions(text, mentionees))) {
     return moveLastWorkoutBack(env, event, chatId, userId, {
-      quotedMessageId: event.message?.quotedMessageId,
+      quotedMessageId: event.message?.quotedMessageId || event.message?.quotedMessage?.id || null,
       mentionedIds: mentionees.map((m) => m.userId).filter(Boolean),
     });
   }
@@ -1144,9 +1144,9 @@ async function moveLastWorkoutBack(env, event, chatId, userId, opts = {}) {
   if (!target) {
     return lineReply(env, event.replyToken,
       `ไม่เจอรายการให้ย้ายครับ 🤔\n\n` +
-      `ลองแท็กชื่อเจ้าตัวแล้วพิมพ์ "เมื่อวาน" (เช่น @Erk เมื่อวาน)\n` +
-      `หรือ reply ที่รูปเช็คอินนั้นแล้วพิมพ์ "เมื่อวาน"\n` +
-      `หรือบันทึกใหม่พร้อมรายละเอียด เช่น "เมื่อวานวิ่ง 5 กม."`);
+      `ถ้า reply ที่รูปแล้วไม่เจอ แปลว่ารูปนั้นเช็คอินไว้ก่อนที่ผมจะเริ่มจำรูปได้\n` +
+      `👉 ให้แท็กชื่อเจ้าตัวแทน: พิมพ์ @ แล้วเลือกชื่อ ตามด้วยคำว่า เมื่อวาน\n\n` +
+      `หรือบันทึกใหม่พร้อมรายละเอียดก็ได้ เช่น "เมื่อวานวิ่ง 5 กม."`);
   }
   if (target.logged_date === yesterday) {
     return lineReply(env, event.replyToken,
