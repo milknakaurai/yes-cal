@@ -978,6 +978,15 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   if (/^(ใครยังไม่ออก|ใครยังไม่|เช็คชื่อ|วันนี้)$/.test(text)) return replyChallengeToday(env, event, chatId);
   if (/^(เตือน|ทวง|แท็ก)$/.test(text)) return replyNudge(env, event, chatId);
   if (/^(สมาชิก|รายชื่อ|ใครอยู่บ้าง)$/.test(text)) return replyMembers(env, event, chatId);
+
+  // คำว่า "ออกกำลังกาย" เฉย ๆ กำกวมเกินไป (เป็นคำสั่งเปิดโหมดด้วย) — ไม่นับเป็นการเช็คอิน
+  // และไม่สมัครสมาชิกให้ เพื่อไม่ให้คนพิมพ์ผ่าน ๆ ถูกดึงเข้าชาเลนจ์โดยไม่ตั้งใจ
+  if (/^(ออกกำลังกาย|โหมดชาเลนจ์)$/.test(text)) {
+    return lineReply(env, event.replyToken,
+      "กลุ่มนี้อยู่ในโหมดชาเลนจ์อยู่แล้วครับ 💪\n\n" +
+      "เช็คอินด้วยการส่งรูป หรือพิมพ์รายละเอียด เช่น \"วิ่ง 5 กม.\" \"เล่นเวท 1 ชม.\"\n" +
+      "ยังไม่ได้สมัคร? พิมพ์ \"เข้าร่วม\"");
+  }
   if (/^(อันดับ|ตาราง|สรุป|leaderboard)$/i.test(text)) return replyLeaderboard(env, event, chatId);
   if (/^(คำสั่ง|ช่วยเหลือ|help)$/i.test(text)) return lineReply(env, event.replyToken, challengeHelpText());
   if (/^โหมดแคล(อรี่)?$/.test(text)) {
