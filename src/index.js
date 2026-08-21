@@ -687,7 +687,11 @@ async function lineReply(env, replyToken, text, mention) {
     },
     body: JSON.stringify({ replyToken, messages: [message] }),
   });
-  if (!res.ok) console.error("reply fail", res.status, await res.text());
+  if (!res.ok) {
+    console.error("reply fail", res.status, await res.text());
+    return null;
+  }
+  return res.json().catch(() => null); // { sentMessages: [{ id, quoteToken }] }
 }
 
 async function linePush(env, to, text, mention) {
@@ -1063,15 +1067,24 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
     "SELECT COUNT(*) AS n FROM workouts WHERE chat_id = ? AND line_user_id = ? AND logged_date = ?"
   ).bind(chatId, userId, day).first();
 
-  await env.DB.prepare(
+  const inserted = await env.DB.prepare(
     `INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, message_id, logged_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
   ).bind(
     chatId, userId, String(result.activity || "ออกกำลังกาย").slice(0, 60),
     result.duration_min ? Math.round(result.duration_min) : null,
     result.kcal ? Math.round(result.kcal) : null,
     source, event.message?.id || null, day
-  ).run();
+  ).first();
+
+  // ผูก id ข้อความที่บอทตอบไว้ด้วย จะได้ reply ที่ข้อความบอทแล้วแก้วันที่ได้เหมือนกัน
+  const rememberReplyId = async (sent) => {
+    const replyId = sent?.sentMessages?.[0]?.id;
+    if (replyId && inserted?.id) {
+      await env.DB.prepare("UPDATE workouts SET reply_message_id = ? WHERE id = ?")
+        .bind(replyId, inserted.id).run().catch(() => {});
+    }
+  };
 
   const detail = [
     result.duration_min ? `${Math.round(result.duration_min)} นาที` : null,
@@ -1084,7 +1097,7 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
       `${result.activity || "ออกกำลังกาย"}${detail ? " — " + detail : ""}`,
       "",
       "ของวันนี้ยังไม่นับนะ ออกแล้วส่งมาได้เลย 💪",
-    ].join("\n"));
+    ].join("\n")).then(rememberReplyId);
   }
 
   const streak = await getStreak(env, chatId, userId);
@@ -1102,7 +1115,7 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
   if (missing.length === 0 && done.length > 0) lines.push("", J.pick(J.ALL_DONE));
   else if (missing.length > 0) lines.push("", `เหลืออีก ${missing.length} คนที่ยังไม่ออกวันนี้`);
 
-  return lineReply(env, event.replyToken, lines.join("\n"));
+  return lineReply(env, event.replyToken, lines.join("\n")).then(rememberReplyId);
 }
 
 // ย้ายรายการเช็คอินไปเป็นของเมื่อวาน
@@ -1129,7 +1142,7 @@ async function moveLastWorkoutBack(env, event, chatId, userId, opts = {}) {
       `SELECT w.id, w.activity, w.logged_date, m.display_name
        FROM workouts w LEFT JOIN challenge_members m
          ON m.chat_id = w.chat_id AND m.line_user_id = w.line_user_id
-       WHERE w.chat_id = ? AND w.message_id = ? LIMIT 1`
+       WHERE w.chat_id = ? AND ? IN (w.message_id, w.reply_message_id) LIMIT 1`
     ).bind(chatId, quotedMessageId).first();
   }
   // 2) แท็กชื่อใครไว้ → รายการล่าสุดของคนแรกที่มีเช็คอินวันนี้ (ข้ามแท็กบอทเอง)

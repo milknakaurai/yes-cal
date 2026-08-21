@@ -49,7 +49,9 @@ globalThis.fetch = async (url, opts) => {
   if (u.includes('/message/reply') || u.includes('/message/push')) {
     const body = JSON.parse(opts.body);
     replies.push(body.messages[0]);
-    return { ok: true, status: 200, text: async () => '' };
+    const id = 'bot' + (++botSeq);
+    lastBotMessageId = id;
+    return { ok: true, status: 200, text: async () => '', json: async () => ({ sentMessages: [{ id }] }) };
   }
   if (u.includes('/member/') || u.includes('/profile/')) {
     return { ok: true, status: 200, json: async () => ({ displayName: CURRENT_NAME }) };
@@ -57,6 +59,8 @@ globalThis.fetch = async (url, opts) => {
   return { ok: true, status: 200, json: async () => ({}), text: async () => '' };
 };
 let CURRENT_NAME = 'ใครสักคน';
+let botSeq = 0;
+export let lastBotMessageId = null;
 
 const worker = (await import(new URL('../src/index.js', import.meta.url))).default;
 const ctx = { waitUntil: (p) => p };
@@ -108,6 +112,13 @@ show('Erk ส่งรูปวิ่ง (ของวันนี้)', await s
 show('Milk reply ที่รูปวิ่ง + "อันนี้คือเมื่อคืน"', await send(textEvent('U_MILK', 'อันนี้คือเมื่อคืน', { quotedMessageId: erkImg2.message.id })));
 
 CURRENT_NAME = 'Peach';
+geminiReply = { is_workout: true, activity: 'ว่ายน้ำ', duration_min: 40, kcal: 320 };
+await send(imageEvent('U_PEACH'));
+const botMsgId = lastBotMessageId;
+CURRENT_NAME = 'Milk';
+show('Milk reply ที่ "ข้อความของบอท" + "เมื่อวาน"', await send(textEvent('U_MILK', 'เมื่อวาน', { quotedMessageId: botMsgId })));
+
+CURRENT_NAME = 'Peach';
 geminiReply = { is_workout: true, activity: 'เวทเทรนนิ่ง', duration_min: 45, kcal: 280 };
 show('Peach พิมพ์ "เล่นเวท 45 นาที"', await send(textEvent('U_PEACH', 'เล่นเวท 45 นาที')));
 show('Peach พิมพ์ "สวัสดีตอนเช้า" (ต้องเงียบ)', await send(textEvent('U_PEACH', 'สวัสดีตอนเช้า')));
@@ -120,6 +131,6 @@ show('Milk พิมพ์ "อันดับ"', await send(textEvent('U_MILK',
 show('Milk พิมพ์ "สมาชิก"', await send(textEvent('U_MILK', 'สมาชิก')));
 
 console.log('\n\n===== ข้อมูลในฐานข้อมูล =====');
-console.log('workouts:', JSON.stringify(db.prepare('SELECT line_user_id, activity, logged_date, message_id FROM workouts').all(), null, 0));
+console.log('workouts:', JSON.stringify(db.prepare('SELECT line_user_id, activity, logged_date, message_id, reply_message_id FROM workouts').all(), null, 0));
 console.log('members :', JSON.stringify(db.prepare('SELECT line_user_id, display_name, active FROM challenge_members').all(), null, 0));
 console.log('usage   :', JSON.stringify(db.prepare('SELECT kind, label, n FROM api_usage').all(), null, 0));
