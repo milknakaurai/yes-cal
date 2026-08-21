@@ -104,15 +104,18 @@ async function handleEvent(event, env) {
 
   const chatId = event.source.groupId || event.source.roomId || userId;
   const text = event.message.type === "text" ? event.message.text.trim() : "";
+  const mode = await getChatMode(env, chatId);
 
-  // สลับกลุ่มนี้เข้าโหมดชาเลนจ์ออกกำลังกาย (ใช้ได้เฉพาะในกลุ่ม)
-  if (/^โหมดชาเลนจ์$/.test(text) && event.source.type !== "user") {
+  // สลับกลุ่มนี้เข้าโหมดชาเลนจ์ — เฉพาะในกลุ่ม และเฉพาะตอนที่ยังไม่ได้อยู่โหมดนี้
+  // (กันคนพิมพ์คำว่า "ออกกำลังกาย" ลอย ๆ ในกลุ่มชาเลนจ์แล้วเจอข้อความต้อนรับซ้ำ
+  //  ในโหมดชาเลนจ์คำนี้จะถูกอ่านเป็นการรายงานว่าออกกำลังกายมาแทน)
+  if (mode !== "challenge" && event.source.type !== "user" && /^(ออกกำลังกาย|โหมดชาเลนจ์)$/.test(text)) {
     await env.DB.prepare("UPDATE chat_targets SET mode = 'challenge' WHERE id = ?").bind(chatId).run();
     await ensureMember(env, chatId, userId, event.source);
     return lineReply(env, event.replyToken, challengeWelcomeText());
   }
 
-  if (await getChatMode(env, chatId) === "challenge") {
+  if (mode === "challenge") {
     if (event.message.type === "image") return handleChallengeImage(env, event, chatId, userId);
     if (event.message.type === "text") return handleChallengeText(env, event, chatId, userId, text);
     return;
@@ -177,7 +180,7 @@ function greetingText() {
     "",
     "จากนั้นกินอะไรก็พิมพ์บอกได้เลย เช่น \"ข้าวมันไก่ 1 จาน\" หรือส่งรูปอาหารมาก็ได้ 📸",
     "",
-    "💪 ถ้าเป็นกลุ่มชาเลนจ์ออกกำลังกาย พิมพ์ \"โหมดชาเลนจ์\" เพื่อสลับโหมด",
+    "💪 ถ้าเป็นกลุ่มชาเลนจ์ออกกำลังกาย พิมพ์ \"ออกกำลังกาย\" เพื่อสลับโหมด",
     "พิมพ์ \"คำสั่ง\" เพื่อดูวิธีใช้ทั้งหมด",
   ].join("\n");
 }

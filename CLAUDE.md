@@ -32,7 +32,7 @@ bash scripts/deploy.sh
 
 1. เอา URL ของ worker ต่อท้าย `/webhook` ไปใส่ที่ LINE Developers → Messaging API → Webhook URL → Verify → เปิด Use webhook
 2. เปิด "Allow bot to join group chats" และปิด Auto-reply / Greeting ใน LINE Official Account Manager
-3. เชิญ OA เข้ากลุ่ม LINE แล้วพิมพ์ `ตั้งเป้า`
+3. เชิญ OA เข้ากลุ่ม LINE แล้วพิมพ์ `ตั้งเป้า` (กลุ่มชาเลนจ์พิมพ์ `ออกกำลังกาย` เพื่อสลับโหมดก่อน)
 
 ## โครงสร้าง
 
