@@ -137,6 +137,9 @@ CURRENT_NAME = 'Lek';
 geminiReply = { is_workout: true, activity: 'วิ่ง', has_screen_data: false };
 show('Lek ส่งรูปลู่วิ่งเปล่า ๆ (ไม่มีตัวเลข → ต้องไม่เช็คอิน)', await send(imageEvent('U_LEK')));
 
+geminiReply = { is_workout: true, activity: 'ยกน้ำหนัก', duration_min: 50, has_screen_data: false };
+show('Lek ส่งหน้าจอ Whoop (flag ผิดแต่อ่านเวลาได้ → ต้องเช็คอินให้)', await send(imageEvent('U_LEK')));
+
 // จำลองสถานการณ์จริง: Lek มี 2 รายการวันนี้ (รูปรองเท้าที่หลุดเข้ามาก่อนหน้า + หน้าจอนาฬิกา)
 geminiReply = { is_workout: true, activity: 'วิ่ง', has_screen_data: true };
 const lekShoe = imageEvent('U_LEK'); await send(lekShoe);

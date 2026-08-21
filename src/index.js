@@ -1120,9 +1120,12 @@ async function handleChallengeImage(env, event, chatId, userId) {
   if (!result?.is_workout) return; // รูปอื่นในกลุ่ม → เงียบไว้ ไม่รบกวน
 
   // รูปบรรยากาศ (ยิม รองเท้า เซลฟี่) ไม่นับเป็นหลักฐาน — ต้องมีหน้าจอที่อ่านตัวเลขได้
-  if (!result.has_screen_data) {
+  // ถ้าอ่านเวลาหรือแคลอรี่ออกมาได้แล้ว ก็แปลว่าเห็นตัวเลขจริง ให้ผ่านเลยไม่ต้องรอ flag
+  const readable = result.has_screen_data || result.duration_min > 0 || result.kcal > 0;
+  if (!readable) {
     const name = await fetchDisplayName(env, event.source);
-    return lineReply(env, event.replyToken, J.pick(J.NEED_PROOF)(name));
+    const seen = result.activity ? `\n\n(ผมเห็นว่าเป็นรูปเกี่ยวกับ "${String(result.activity).slice(0, 30)}" แต่อ่านตัวเลขไม่ออก)` : "";
+    return lineReply(env, event.replyToken, J.pick(J.NEED_PROOF)(name) + seen);
   }
   return saveWorkoutAndReply(env, event, chatId, userId, result, "image");
 }
