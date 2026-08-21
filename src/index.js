@@ -2,6 +2,7 @@
 // Cloudflare Worker: LINE webhook + Gemini calorie estimation + D1 + dashboard API + nightly cron
 
 import { NUTRITION_HINTS } from "./food-reference.js";
+import { EXERCISE_HINTS } from "./exercise-reference.js";
 import * as J from "./jokes.js";
 
 const LINE_API = "https://api.line.me/v2/bot";
@@ -957,6 +958,8 @@ const WORKOUT_IMAGE_PROMPT = `ดูรูปนี้แล้วบอกว�
 - รูปเซลฟี่ในชุดออกกำลังกายที่ยิมหรือสนาม
 
 ถ้าเห็นตัวเลขบนหน้าจอ ให้อ่านค่าจริงจากรูป (ระยะเวลาแปลงเป็นนาที, แคลอรี่เลือก active calories ถ้ามีทั้ง active และ total)
+ถ้าไม่มีตัวเลขให้อ่าน ให้ประเมินจากตารางนี้:
+${EXERCISE_HINTS}
 เมื่อ is_workout = true ต้องใส่ activity เป็นชื่อกิจกรรมภาษาไทยเสมอ ถ้าดูไม่ออกว่ากิจกรรมอะไรให้ใส่ว่า "ออกกำลังกาย"
 ถ้าเป็นรูปอาหาร รูปวิว เซลฟี่ธรรมดา หรือรูปอื่นที่ไม่เกี่ยวกับการออกกำลังกาย ให้ is_workout = false`;
 
@@ -964,6 +967,7 @@ function workoutTextPrompt(text) {
   return `ผู้ใช้พิมพ์ข้อความในกลุ่มชาเลนจ์ออกกำลังกาย: "${text}"
 
 ถ้าเป็นการรายงานว่าตัวเองออกกำลังกาย (เช่น "วิ่ง 5 กม.", "เล่นเวท 1 ชม.", "โยคะ 45 นาที", "ว่ายน้ำมาแล้ว") ให้ is_workout = true พร้อมระบุกิจกรรม ระยะเวลา และประเมินแคลอรี่ที่เผาผลาญ
+${EXERCISE_HINTS}
 ถ้าเป็นบทสนทนาทั่วไป ทักทาย ถามคำถาม หรือชวนคุย ให้ is_workout = false`;
 }
 
