@@ -875,6 +875,14 @@ async function fetchLineImage(env, messageId) {
   };
 }
 
+// เวลาจาก created_at (UTC ในรูป 'YYYY-MM-DD HH:MM:SS') → HH:MM เวลาไทย
+function bkkTimeOf(sqlUtc) {
+  const d = new Date(String(sqlUtc).replace(" ", "T") + "Z");
+  if (isNaN(d)) return "-";
+  const bkk = new Date(d.getTime() + 7 * 3600 * 1000);
+  return `${String(bkk.getUTCHours()).padStart(2, "0")}:${String(bkk.getUTCMinutes()).padStart(2, "0")}`;
+}
+
 // เหลืออีกกี่ชั่วโมงก่อนหมดวัน (เวลาไทย) — อย่างน้อย 1 เพื่อไม่ให้ข้อความอ่านแล้วแปลก
 function hoursLeftToday() {
   const bkk = new Date(Date.now() + 7 * 3600 * 1000);
@@ -995,6 +1003,16 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   if (/^(ใครยังไม่ออก|ใครยังไม่|เช็คชื่อ|วันนี้)$/.test(text)) return replyChallengeToday(env, event, chatId);
   if (/^(เตือน|ทวง|แท็ก)$/.test(text)) return replyNudge(env, event, chatId);
   if (/^(สมาชิก|รายชื่อ|ใครอยู่บ้าง)$/.test(text)) return replyMembers(env, event, chatId);
+
+  const mentioneesForDelete = event.message?.mention?.mentionees || [];
+  const delMatch = stripMentions(text, mentioneesForDelete).match(/^(?:ลบ|ลบล่าสุด|ยกเลิก)\s*(\d+)?$/);
+  if (delMatch) {
+    return deleteWorkout(env, event, chatId, userId, {
+      index: delMatch[1] ? parseInt(delMatch[1], 10) : null,
+      quotedMessageId: event.message?.quotedMessageId || event.message?.quotedMessage?.id || null,
+      mentionedIds: mentioneesForDelete.map((m) => m.userId).filter(Boolean),
+    });
+  }
 
   // คำว่า "ออกกำลังกาย" เฉย ๆ กำกวมเกินไป (เป็นคำสั่งเปิดโหมดด้วย) — ไม่นับเป็นการเช็คอิน
   // และไม่สมัครสมาชิกให้ เพื่อไม่ให้คนพิมพ์ผ่าน ๆ ถูกดึงเข้าชาเลนจ์โดยไม่ตั้งใจ
@@ -1135,6 +1153,63 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
   else if (missing.length > 0) lines.push("", `เหลืออีก ${missing.length} คนที่ยังไม่ออกวันนี้`);
 
   return lineReply(env, event.replyToken, lines.join("\n")).then(rememberReplyId);
+}
+
+// ลบรายการเช็คอิน — เลือกเป้าหมายได้ 3 ทางเหมือนคำสั่งย้ายวัน
+//   reply ที่รูป/ข้อความบอท → รายการนั้น · แท็กชื่อ → ของคนนั้น · ไม่ระบุ → ของตัวเอง
+// ถ้าวันนั้นมีหลายรายการและไม่ได้ชี้เจาะจง จะโชว์รายการให้เลือกหมายเลขก่อน
+async function deleteWorkout(env, event, chatId, senderId, opts = {}) {
+  const today = bkkToday();
+  const { index = null, quotedMessageId = null, mentionedIds = [] } = opts;
+  const withName = `SELECT w.id, w.activity, w.duration_min, w.kcal, w.created_at, m.display_name
+     FROM workouts w LEFT JOIN challenge_members m
+       ON m.chat_id = w.chat_id AND m.line_user_id = w.line_user_id`;
+
+  if (quotedMessageId) {
+    const row = await env.DB.prepare(
+      `${withName} WHERE w.chat_id = ? AND ? IN (w.message_id, w.reply_message_id) LIMIT 1`
+    ).bind(chatId, quotedMessageId).first();
+    if (row) return removeWorkoutRow(env, event, chatId, row);
+  }
+
+  const targetId = mentionedIds.find((u) => u && u !== senderId) || senderId;
+  const rows = (await env.DB.prepare(
+    `${withName} WHERE w.chat_id = ? AND w.line_user_id = ? AND w.logged_date = ? ORDER BY w.id`
+  ).bind(chatId, targetId, today).all()).results;
+
+  if (!rows.length) {
+    return lineReply(env, event.replyToken,
+      targetId === senderId
+        ? "วันนี้คุณยังไม่มีรายการให้ลบครับ 🤔"
+        : "วันนี้คนที่แท็กยังไม่มีรายการให้ลบครับ 🤔");
+  }
+  if (index) {
+    const row = rows[index - 1];
+    if (!row) return lineReply(env, event.replyToken, `มีแค่ ${rows.length} รายการครับ ระบุหมายเลข 1-${rows.length}`);
+    return removeWorkoutRow(env, event, chatId, row);
+  }
+  if (rows.length === 1) return removeWorkoutRow(env, event, chatId, rows[0]);
+
+  const who = rows[0].display_name || "คนนี้";
+  const list = rows.map((r, i) => {
+    const detail = [r.duration_min ? `${r.duration_min} นาที` : null, r.kcal ? `${fmtNum(r.kcal)} kcal` : null]
+      .filter(Boolean).join(" · ");
+    return `${i + 1}. ${r.activity}${detail ? " — " + detail : ""} (${bkkTimeOf(r.created_at)})`;
+  });
+  return lineReply(env, event.replyToken,
+    `${who} มี ${rows.length} รายการวันนี้ ระบุหมายเลขที่จะลบด้วยครับ 🗑️\n\n${list.join("\n")}\n\n` +
+    (targetId === senderId ? `พิมพ์: ลบ 1` : `พิมพ์: แท็กชื่อ แล้วตามด้วย ลบ 1`));
+}
+
+async function removeWorkoutRow(env, event, chatId, row) {
+  await env.DB.prepare("DELETE FROM workouts WHERE id = ?").bind(row.id).run();
+  const { done, missing } = await getTodayStatus(env, chatId);
+  const who = row.display_name ? `ของ ${row.display_name} ` : "";
+  return lineReply(env, event.replyToken, [
+    `ลบ "${row.activity}" ${who}แล้วครับ 🗑️`,
+    "",
+    missing.length ? `เหลืออีก ${missing.length} คนที่ยังไม่ออกวันนี้` : "วันนี้ทุกคนเช็คอินครบแล้ว 🎉",
+  ].join("\n"));
 }
 
 // ย้ายรายการเช็คอินไปเป็นของเมื่อวาน
@@ -1361,6 +1436,7 @@ function challengeHelpText() {
     "เข้าร่วม — สมัครเข้าชาเลนจ์ (พิมพ์กันคนละครั้ง)",
     "วันนี้ — ดูว่าใครออกแล้ว ใครยังไม่ออก",
     "สมาชิก — ดูรายชื่อคนที่เข้าร่วมทั้งหมด",
+    "ลบ — ลบรายการเช็คอินของตัวเอง (แท็กชื่อ/reply เพื่อลบของเพื่อน)",
     "เมื่อวาน — ย้ายรายการล่าสุดไปเป็นของเมื่อวาน",
     "   (แท็กชื่อเพื่อน หรือ reply ที่รูปเขา แล้วพิมพ์ \"เมื่อวาน\" ก็แก้ให้เขาได้)",
     "เตือน — แท็กชื่อคนที่ยังไม่ออก (เด้งแจ้งเตือนถึงตัว)",

@@ -128,6 +128,19 @@ show('Peach พิมพ์ "ออกกำลังกาย" ในโหม�
 CURRENT_NAME = 'Lek';
 geminiReply = { is_workout: true, activity: 'วิ่ง', has_screen_data: false };
 show('Lek ส่งรูปลู่วิ่งเปล่า ๆ (ไม่มีตัวเลข → ต้องไม่เช็คอิน)', await send(imageEvent('U_LEK')));
+
+// จำลองสถานการณ์จริง: Lek มี 2 รายการวันนี้ (รูปรองเท้าที่หลุดเข้ามาก่อนหน้า + หน้าจอนาฬิกา)
+geminiReply = { is_workout: true, activity: 'วิ่ง', has_screen_data: true };
+const lekShoe = imageEvent('U_LEK'); await send(lekShoe);
+geminiReply = { is_workout: true, activity: 'วิ่งลู่วิ่ง', duration_min: 35, kcal: 305, has_screen_data: true };
+await send(imageEvent('U_LEK'));
+CURRENT_NAME = 'Milk';
+show('Milk แท็ก "@Lek ลบ" (Lek มี 2 รายการ → ต้องให้เลือกหมายเลข)', await send(textEvent('U_MILK', '@Lek ลบ', {
+  mention: { mentionees: [{ index: 0, length: 4, userId: 'U_LEK', type: 'user' }] } })));
+show('Milk พิมพ์ "@Lek ลบ 1" (ลบรายการแรก)', await send(textEvent('U_MILK', '@Lek ลบ 1', {
+  mention: { mentionees: [{ index: 0, length: 4, userId: 'U_LEK', type: 'user' }] } })));
+show('Milk reply ที่รูปรองเท้า + "ลบ" (อีกวิธี)', await send(textEvent('U_MILK', 'ลบ', { quotedMessageId: lekShoe.message.id })));
+CURRENT_NAME = 'Lek';
 show('Milk พิมพ์ "วันนี้" (Lek ต้องยังไม่ถูกนับ)', await send(textEvent('U_MILK', 'วันนี้')));
 
 CURRENT_NAME = 'Milk';
