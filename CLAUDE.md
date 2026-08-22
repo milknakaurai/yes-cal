@@ -40,6 +40,8 @@ bash scripts/deploy.sh
 - `public/index.html` — dashboard หน้าเดียว ไม่มี dependency ภายนอก รองรับ dark mode
 - `src/food-reference.js` — ตารางค่าโภชนาการอาหารไทย ~40 เมนู ที่ให้ Gemini ยึดก่อนประเมินเอง
 - `src/jokes.js` — คลังมุกของบอท สุ่มทุกครั้ง (ล้อความขี้เกียจได้ ห้ามล้อรูปร่าง/น้ำหนัก)
+  **ตอนเช็คอินห้ามชม** — สมาชิกในกลุ่มบอกว่าโดนชมทุกครั้งแล้วอึดอัด ใช้ตอบรับสั้น ๆ พอ
+  ส่วนข้อความทวงตอน 22:00 ยังกวน ๆ ได้ตามเดิม
 - `schema.sql` — users / meals / weights / chat_targets / challenge_members / workouts / api_usage
 - `scripts/deploy.sh` — deploy ครบจบในสคริปต์เดียว
 
