@@ -1171,19 +1171,27 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
   }
 
   const streak = await getStreak(env, chatId, userId);
+  const weekDays = await countDaysSince(env, chatId, userId, bkkDateOffset(-6));
   const lines = [
     already.n > 0
       ? J.pick(J.CHECKIN_AGAIN)(name, already.n + 1)
       : J.pick(J.CHECKIN)(name),
     `${result.activity || "ออกกำลังกาย"}${detail ? " — " + detail : ""}`,
   ];
-  if (already.n === 0 && streak > 1) {
-    lines.push(J.pick(streak >= 7 ? J.STREAK_BIG : J.STREAK)(streak));
-  }
 
+  // สถิติของเจ้าตัว — ให้ข้อมูลแทนคำชม
+  const personal = [`7 วันล่าสุด ${weekDays}/7 วัน`];
+  if (streak > 1) personal.push(`ต่อเนื่อง ${streak} วัน`);
+  lines.push("", personal.join(" · "));
+
+  // สถานะของกลุ่มวันนี้ พร้อมรายชื่อคนที่ยังไม่ออก
   const { done, missing } = await getTodayStatus(env, chatId);
-  if (missing.length === 0 && done.length > 0) lines.push("", J.pick(J.ALL_DONE));
-  else if (missing.length > 0) lines.push("", `เหลืออีก ${missing.length} คนที่ยังไม่ออกวันนี้`);
+  const total = done.length + missing.length;
+  if (total) {
+    lines.push("", `วันนี้ออกแล้ว ${done.length}/${total} คน`);
+    if (missing.length) lines.push(`ยังไม่ออก: ${nameList(missing)}`);
+    else lines.push(J.pick(J.ALL_DONE));
+  }
 
   return lineReply(env, event.replyToken, lines.join("\n")).then(rememberReplyId);
 }
@@ -1354,6 +1362,22 @@ async function getTodayStatus(env, chatId) {
     done: rows.filter((r) => r.n > 0),
     missing: rows.filter((r) => !r.n),
   };
+}
+
+// จำนวนวันที่ออกกำลังกาย (นับวันที่ไม่ซ้ำ) ตั้งแต่วันที่กำหนด
+async function countDaysSince(env, chatId, userId, fromDate) {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT logged_date) AS n FROM workouts
+     WHERE chat_id = ? AND line_user_id = ? AND logged_date >= ?`
+  ).bind(chatId, userId, fromDate).first();
+  return row?.n || 0;
+}
+
+// รายชื่อแบบย่อ กันข้อความยาวเกินในกลุ่มใหญ่
+function nameList(rows, max = 6) {
+  const names = rows.slice(0, max).map((r) => r.display_name);
+  const rest = rows.length - names.length;
+  return names.join(", ") + (rest > 0 ? ` และอีก ${rest} คน` : "");
 }
 
 // จำนวนวันที่ออกติดต่อกัน (นับถึงวันนี้ หรือเมื่อวานถ้าวันนี้ยังไม่ออก)
