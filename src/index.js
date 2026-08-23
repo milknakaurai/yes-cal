@@ -1192,14 +1192,13 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
 
   const streak = await getStreak(env, chatId, userId);
   const weekDays = await countDaysSince(env, chatId, userId, bkkDateOffset(-6));
+
+  // ขึ้นต้นด้วยข้อมูลจริง ไม่ใช้ประโยคสำเร็จรูป — ข้อความจะได้ไม่ซ้ำกันเวลาหลายคนเช็คอินติด ๆ
+  const round = already.n > 0 ? `รอบที่ ${already.n + 1} · ` : "";
   const lines = [
-    already.n > 0
-      ? J.pick(J.CHECKIN_AGAIN)(name, already.n + 1)
-      : J.pick(J.CHECKIN)(name),
-    `${result.activity || "ออกกำลังกาย"}${detail ? " — " + detail : ""}`,
+    `${name} ✅ ${round}${result.activity || "ออกกำลังกาย"}${detail ? " — " + detail : ""}`,
   ];
 
-  // สถิติของเจ้าตัว — ให้ข้อมูลแทนคำชม
   const personal = [`7 วันล่าสุด ${weekDays}/7 วัน`];
   if (streak > 1) personal.push(`ต่อเนื่อง ${streak} วัน`);
   lines.push("", personal.join(" · "));
@@ -1209,8 +1208,7 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
   const total = done.length + missing.length;
   if (total) {
     lines.push("", `วันนี้ออกแล้ว ${done.length}/${total} คน`);
-    if (missing.length) lines.push(`ยังไม่ออก: ${nameList(missing)}`);
-    else lines.push(J.pick(J.ALL_DONE));
+    lines.push(missing.length ? `ยังไม่ออก: ${nameList(missing)}` : "ครบทุกคนแล้ว 🎉");
   }
 
   return lineReply(env, event.replyToken, lines.join("\n")).then(rememberReplyId);
