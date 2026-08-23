@@ -709,6 +709,20 @@ async function linePush(env, to, text, mention) {
   if (!res.ok) throw new Error(`push ${res.status}: ${await res.text()}`);
 }
 
+let BOT_USER_ID = null;
+async function getBotUserId(env) {
+  if (BOT_USER_ID) return BOT_USER_ID;
+  try {
+    const res = await fetch(`${LINE_API}/info`, {
+      headers: { Authorization: `Bearer ${sec(env, "LINE_CHANNEL_ACCESS_TOKEN")}` },
+    });
+    if (res.ok) BOT_USER_ID = (await res.json()).userId || null;
+  } catch (e) {
+    console.error("bot info failed", e.message);
+  }
+  return BOT_USER_ID;
+}
+
 async function fetchDisplayName(env, source) {
   const userId = source.userId;
   let url = `${LINE_API}/profile/${userId}`;
@@ -1053,6 +1067,12 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   }
   if (YESTERDAY_HINT.test(text) && looksLikeWorkout(text.replace(YESTERDAY_HINT, " "))) {
     dateOverride = bkkDateOffset(-1);
+  }
+
+  // ถูกแท็กชื่อบอทตรง ๆ ต้องตอบเสมอ (เงียบใส่คนที่เรียกหาดูเหมือนเมิน)
+  const botId = await getBotUserId(env);
+  if (botId && mentionees.some((m) => m.userId === botId)) {
+    return replyWhenTagged(env, event, chatId, userId, stripMentions(text, mentionees));
   }
 
   // กลุ่มใหญ่คุยกันเยอะ — กรองด้วยคำก่อน ไม่งั้นเปลืองโควตา Gemini และตอบมั่ว
@@ -1455,6 +1475,38 @@ function challengeWelcomeText() {
     "ทุกวัน 22:00 ผมจะประกาศว่าใครยังไม่ออก ⏰",
     "พิมพ์ \"คำสั่ง\" เพื่อดูวิธีใช้ทั้งหมด",
   ].join("\n");
+}
+
+// มีคนแท็กบอท — ถ้า reply มาที่รูปด้วย ให้ลองอ่านรูปนั้นให้ ไม่งั้นบอกวิธีใช้
+async function replyWhenTagged(env, event, chatId, userId, restText) {
+  const quotedId = event.message?.quotedMessageId || event.message?.quotedMessage?.id || null;
+
+  if (quotedId) {
+    const img = await fetchLineImage(env, quotedId).catch(() => null);
+    if (img) {
+      const result = await geminiWorkout(env, [
+        { inline_data: { mime_type: img.mime, data: img.b64 } },
+        { text: WORKOUT_IMAGE_PROMPT },
+      ]);
+      if (result?.__quota) return lineReply(env, event.replyToken, quotaText());
+      if (result?.is_workout && (result.has_screen_data || result.duration_min > 0 || result.kcal > 0)) {
+        return saveWorkoutAndReply(env, event, chatId, userId, result, "image");
+      }
+      const seen = result?.activity ? `"${String(result.activity).slice(0, 30)}"` : "รูปนี้";
+      return lineReply(env, event.replyToken,
+        `อ่านแล้วครับ 👀 ${seen} ยังเช็คอินไม่ได้นะ\n\n` +
+        `ต้องเป็นหน้าจอสรุปผลออกกำลังกายที่มีตัวเลข (เวลา/ระยะทาง/หัวใจ)\n` +
+        `ข้อมูลการนอน อาหาร หรือรูปบรรยากาศ ยังไม่นับครับ`);
+    }
+  }
+
+  return lineReply(env, event.replyToken, [
+    "เรียกผมเหรอครับ 👀",
+    "",
+    restText ? `ที่พิมพ์มา ("${restText.slice(0, 40)}") ผมยังไม่เข้าใจว่าจะให้ทำอะไร` : "",
+    "อยากให้อ่านรูปไหน — reply ที่รูปนั้นแล้วแท็กผมมาได้เลย 👉📸",
+    "หรือพิมพ์ \"คำสั่ง\" ดูว่าผมทำอะไรได้บ้าง",
+  ].filter(Boolean).join("\n"));
 }
 
 async function replyMembers(env, event, chatId) {

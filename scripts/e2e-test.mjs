@@ -53,6 +53,9 @@ globalThis.fetch = async (url, opts) => {
     lastBotMessageId = id;
     return { ok: true, status: 200, text: async () => '', json: async () => ({ sentMessages: [{ id }] }) };
   }
+  if (u.endsWith('/v2/bot/info')) {
+    return { ok: true, status: 200, json: async () => ({ userId: 'U_BOT' }) };
+  }
   if (u.includes('/member/') || u.includes('/profile/')) {
     return { ok: true, status: 200, json: async () => ({ displayName: CURRENT_NAME }) };
   }
@@ -153,6 +156,22 @@ show('Milk พิมพ์ "@Lek ลบ 1" (ลบรายการแรก)',
 show('Milk reply ที่รูปรองเท้า + "ลบ" (อีกวิธี)', await send(textEvent('U_MILK', 'ลบ', { quotedMessageId: lekShoe.message.id })));
 CURRENT_NAME = 'Lek';
 show('Milk พิมพ์ "วันนี้" (Lek ต้องยังไม่ถูกนับ)', await send(textEvent('U_MILK', 'วันนี้')));
+
+CURRENT_NAME = 'Peach';
+show('Peach แท็ก "@Yes Cal อ่านๆ" เฉย ๆ (ต้องตอบ ไม่เงียบ)', await send(textEvent('U_PEACH', '@Yes Cal อ่านๆ', {
+  mention: { mentionees: [{ index: 0, length: 8, userId: 'U_BOT', type: 'user' }] } })));
+
+geminiReply = { is_workout: false, activity: 'ข้อมูลการนอน' };
+const sleepImg = imageEvent('U_PEACH'); await send(sleepImg);
+show('Peach reply ที่รูปการนอน + แท็กบอท (ต้องบอกว่าอ่านแล้วแต่ไม่นับ)', await send(textEvent('U_PEACH', '@Yes Cal อ่านๆ', {
+  quotedMessageId: sleepImg.message.id,
+  mention: { mentionees: [{ index: 0, length: 8, userId: 'U_BOT', type: 'user' }] } })));
+
+geminiReply = { is_workout: true, activity: 'วิ่ง', duration_min: 30, kcal: 250, has_screen_data: true };
+const runImg = imageEvent('U_PEACH'); await send(runImg);
+show('Peach reply ที่รูปนาฬิกา + แท็กบอท (ต้องเช็คอินให้)', await send(textEvent('U_PEACH', '@Yes Cal อ่านให้หน่อย', {
+  quotedMessageId: runImg.message.id,
+  mention: { mentionees: [{ index: 0, length: 8, userId: 'U_BOT', type: 'user' }] } })));
 
 CURRENT_NAME = 'Milk';
 show('Milk พิมพ์ "เตือน" (แท็กคนที่ยังไม่ออก)', await send(textEvent('U_MILK', 'เตือน')));
