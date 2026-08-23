@@ -15,6 +15,11 @@ LINE bot 2 โหมดในตัวเดียว รันบน Cloudflare
 
 ## วิธี deploy
 
+**ปกติไม่ต้อง deploy เอง** — `.github/workflows/deploy.yml` deploy ให้อัตโนมัติทุกครั้งที่ push
+(รัน `scripts/e2e-test.mjs` ก่อน เทสไม่ผ่านจะไม่ deploy) ต้องมี repo secret `CLOUDFLARE_API_TOKEN`
+
+### deploy เองด้วยมือ
+
 ต้องการ network access ถึง `api.cloudflare.com` และ `*.workers.dev`
 (ถ้า session ถูกบล็อก 403 จาก proxy = environment ยังตั้ง network เป็น Trusted อยู่ ต้องให้เจ้าของเปลี่ยนเป็น Full หรือ Custom ก่อน — แก้จากข้างในไม่ได้)
 

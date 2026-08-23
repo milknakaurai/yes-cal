@@ -1,0 +1,32 @@
+# Deploy อัตโนมัติทุกครั้งที่ push ขึ้น branch นี้
+# ต้องตั้ง repository secret ชื่อ CLOUDFLARE_API_TOKEN ไว้ครั้งเดียว ที่
+#   GitHub → repo → Settings → Secrets and variables → Actions → New repository secret
+# (secret ของบอทเอง — LINE / Gemini / Dashboard — ตั้งไว้ที่ Worker แล้ว คนละที่กัน ไม่ต้องยุ่ง)
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches: [claude/line-calorie-tracker-jmgcyz]
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci || npm install
+
+      # กันของพังขึ้นกลุ่ม — เทสไม่ผ่านคือไม่ deploy
+      - name: Run end-to-end tests
+        run: node scripts/e2e-test.mjs
+
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

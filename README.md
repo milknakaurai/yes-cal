@@ -131,6 +131,14 @@ npm run deploy
 3. พิมพ์ `ตั้งเป้า` ในกลุ่ม เริ่มใช้ได้เลย
 4. หน้าเว็บสถิติ: เปิด URL หลัก แล้วใส่ DASHBOARD_KEY
 
+## Deploy อัตโนมัติ
+
+`.github/workflows/deploy.yml` — ทุก push ขึ้น branch นี้จะรันชุดทดสอบก่อน แล้ว deploy ให้เองถ้าผ่าน
+ต้องตั้ง repository secret **`CLOUDFLARE_API_TOKEN`** ครั้งเดียวที่
+GitHub → repo → Settings → Secrets and variables → Actions → New repository secret
+
+deploy เองจากเครื่องด้วย `npx wrangler deploy` ก็ยังทำได้ตามปกติ
+
 ## ทดสอบก่อน deploy
 
 ```bash
