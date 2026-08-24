@@ -4,8 +4,12 @@ main = "src/index.js"
 compatibility_date = "2026-08-01"
 
 # dashboard (หน้าเว็บสถิติ) เสิร์ฟจากโฟลเดอร์ public/
+#   /         → index.html   (หน้าแคลอรี่)
+#   /workout  → workout.html (หน้าชาเลนจ์ออกกำลังกาย)
+# binding ไว้ให้ worker หยิบไฟล์เองได้ เผื่อ path สวย ๆ ที่ไม่ตรงชื่อไฟล์
 [assets]
 directory = "public"
+binding = "ASSETS"
 
 [[d1_databases]]
 binding = "DB"

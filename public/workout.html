@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yes Cal — ชาเลนจ์</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --done: #1baf7a;
+    --done-soft: rgba(27,175,122,0.16);
+    --miss: #d03b3b;
+    --miss-soft: rgba(208,59,59,0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface-1: #1a1a19;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --done: #199e70;
+      --done-soft: rgba(25,158,112,0.22);
+      --miss: #d03b3b;
+      --miss-soft: rgba(208,59,59,0.18);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 20px 16px 48px;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  h1 { font-size: 22px; font-weight: 700; }
+  .date { color: var(--text-secondary); font-size: 14px; }
+  .navlink { margin-left: auto; font-size: 13px; color: var(--series-1); text-decoration: none; }
+  .navlink:hover { text-decoration: underline; }
+  h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+  .group-head { display: flex; align-items: baseline; gap: 8px; margin: 26px 0 12px; flex-wrap: wrap; }
+  .group-name { font-size: 17px; font-weight: 700; }
+  .group-meta { font-size: 12.5px; color: var(--text-muted); }
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .hero { font-size: 34px; font-weight: 700; line-height: 1.1; }
+  .hero small { font-size: 15px; font-weight: 400; color: var(--text-secondary); }
+  .meter { height: 8px; border-radius: 4px; background: var(--grid); margin: 12px 0 14px; overflow: hidden; }
+  .meter > div { height: 100%; border-radius: 4px; background: var(--done); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .chip {
+    font-size: 12.5px; padding: 4px 10px; border-radius: 999px;
+    background: var(--done-soft); color: var(--text-primary);
+  }
+  .chip.miss { background: var(--miss-soft); }
+  .row-label { font-size: 12px; color: var(--text-muted); margin-top: 12px; }
+  .row-label:first-of-type { margin-top: 0; }
+
+  .gridwrap { overflow-x: auto; }
+  .heat { border-collapse: separate; border-spacing: 3px; font-size: 12px; }
+  .heat th { font-weight: 500; color: var(--text-muted); font-size: 10.5px; text-align: center; line-height: 1.25; padding: 0 0 2px; }
+  .heat th.today { color: var(--series-1); font-weight: 700; }
+  /* ชื่อค้างไว้ซ้ายมือตอนเลื่อนตาราง ไม่งั้นจอแคบจะไม่รู้ว่าแถวไหนของใคร */
+  .heat td.name, .heat th.corner {
+    position: sticky; left: 0; z-index: 1; background: var(--surface-1);
+    /* กลบช่องว่าง border-spacing ไม่ให้เห็นเศษช่องโผล่ข้างชื่อตอนเลื่อน */
+    box-shadow: 3px 0 0 var(--surface-1);
+    text-align: left; padding-right: 10px; font-size: 13px; white-space: nowrap;
+    color: var(--text-primary); max-width: 130px; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cell { width: 22px; height: 22px; border-radius: 5px; background: var(--grid); }
+  .cell.on { background: var(--done); }
+  .cell.on.multi { box-shadow: inset 0 0 0 2px var(--surface-1); }
+  .cell.todaycol { outline: 1.5px solid var(--series-1); outline-offset: 1px; }
+  table.rank { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.rank th { text-align: left; color: var(--text-muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+  table.rank td { padding: 7px 8px; border-bottom: 1px solid var(--grid); }
+  table.rank td.num, table.rank th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .log { list-style: none; }
+  .log li { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--grid); font-size: 13.5px; }
+  .log li:last-child { border-bottom: none; }
+  .log .who { font-weight: 600; min-width: 82px; }
+  .log .what { color: var(--text-secondary); flex: 1; }
+  .log .when { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--text-muted); font-size: 13.5px; padding: 12px 0; }
+  .note { color: var(--text-muted); font-size: 12px; margin-top: 22px; text-align: center; }
+  #keybox { max-width: 360px; margin: 80px auto; text-align: center; }
+  #keybox input {
+    width: 100%; padding: 10px 12px; font-size: 15px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+    margin: 12px 0;
+  }
+  #keybox button {
+    padding: 10px 24px; font-size: 15px; border-radius: 8px; border: none;
+    background: var(--series-1); color: #fff; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+const $app = document.getElementById("app");
+const DAYS = 14;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const TH_MONTHS = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+const thaiDate = (d) => { const [, m, day] = d.split("-").map(Number); return `${day} ${TH_MONTHS[m - 1]}`; };
+const thaiDow = (d) => ["อา","จ","อ","พ","พฤ","ศ","ส"][new Date(d + "T00:00:00Z").getUTCDay()];
+
+// เปิดด้วยลิงก์ ?key=... ได้เลย ไม่ต้องพิมพ์ (เก็บลง localStorage แล้วลบออกจาก URL กันหลุด)
+function keyFromUrl() {
+  const k = new URLSearchParams(location.search).get("key");
+  if (!k) return;
+  localStorage.setItem("yescal_key", k);
+  history.replaceState(null, "", location.pathname);
+}
+
+async function load() {
+  const key = localStorage.getItem("yescal_key") || "";
+  const res = await fetch(`/api/challenge?days=${DAYS}` + (key ? "&key=" + encodeURIComponent(key) : ""));
+  if (res.status === 401) return renderKeyPrompt();
+  render(await res.json());
+}
+
+function renderKeyPrompt() {
+  // ต้องเป็น <form> จริง ๆ มือถือถึงจะขึ้นปุ่ม Go บนคีย์บอร์ด และตัวจำรหัสผ่านถึงจะทำงาน
+  $app.innerHTML = `
+    <div id="keybox">
+      <h1>Yes Cal 🔒</h1>
+      <p class="date" style="margin-top:8px">ใส่รหัสผ่านหน้าเว็บ (DASHBOARD_KEY)</p>
+      <form id="keyform">
+        <input type="password" id="keyinput" name="password" autocomplete="current-password"
+               autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go">
+        <br><button type="submit" id="keybtn">เข้าดู</button>
+      </form>
+    </div>`;
+  const input = document.getElementById("keyinput");
+  document.getElementById("keyform").onsubmit = (e) => {
+    e.preventDefault();
+    localStorage.setItem("yescal_key", input.value.trim());
+    load();
+  };
+  // autofocus ไม่ทำงานกับ element ที่เพิ่งใส่ด้วย innerHTML — ต้องสั่ง focus เอง
+  input.focus();
+}
+
+function render(data) {
+  const head = `<header>
+      <h1>Yes Cal 💪</h1>
+      <span class="date">ชาเลนจ์ออกกำลังกาย · ${thaiDate(data.today)}</span>
+      <a class="navlink" href="/">ไปหน้าแคลอรี่ →</a>
+    </header>`;
+
+  if (!data.chats.length) {
+    $app.innerHTML = head + `<div class="card"><div class="empty">
+      ยังไม่มีกลุ่มไหนเปิดโหมดชาเลนจ์ — พิมพ์ "ออกกำลังกาย" ในกลุ่ม LINE เพื่อเริ่มได้เลยครับ
+    </div></div>`;
+    return;
+  }
+  $app.innerHTML = head + data.chats.map((c) => groupSection(c, data)).join("") +
+    `<p class="note">อัปเดตทุกครั้งที่รีเฟรช · บอทเตือนคนที่ยังไม่ออกทุกวัน 22:00</p>`;
+  // จอแคบตารางเลื่อนได้ — เลื่อนไปสุดขวาให้เห็นวันนี้ก่อน (คอลัมน์ที่สนใจที่สุด)
+  document.querySelectorAll(".gridwrap").forEach((el) => (el.scrollLeft = el.scrollWidth));
+}
+
+function groupSection(c, data) {
+  const done = c.members.filter((m) => m.done_today);
+  const missing = c.members.filter((m) => !m.done_today);
+  const total = c.members.length;
+
+  if (!total) {
+    return `<div class="group-head"><span class="group-name">${esc(c.name)}</span></div>
+      <div class="card"><div class="empty">ยังไม่มีใครเข้าร่วม — พิมพ์ "เข้าร่วม" ในกลุ่มได้เลย</div></div>`;
+  }
+
+  const pct = Math.round((done.length / total) * 100);
+  const todayCard = `<div class="card">
+      <h2>วันนี้</h2>
+      <div class="hero">${done.length}<small>/${total} คน</small></div>
+      <div class="meter"><div style="width:${pct}%"></div></div>
+      ${done.length ? `<div class="row-label">ออกแล้ว</div><div class="chips">${
+        done.map((m) => `<span class="chip">${esc(m.name)}</span>`).join("")}</div>` : ""}
+      ${missing.length ? `<div class="row-label">ยังไม่ออก</div><div class="chips">${
+        missing.map((m) => `<span class="chip miss">${esc(m.name)}</span>`).join("")}</div>`
+        : `<div class="row-label" style="color:var(--done)">ครบทุกคนแล้ว 🎉</div>`}
+    </div>`;
+
+  const heat = `<div class="card">
+      <h2>${data.dates.length} วันล่าสุด</h2>
+      <div class="gridwrap"><table class="heat"><thead><tr><th class="corner"></th>${
+        data.dates.map((d) => `<th class="${d === data.today ? "today" : ""}">${thaiDow(d)}<br>${d.slice(8)}</th>`).join("")
+      }</tr></thead><tbody>${
+        c.members.map((m) => `<tr><td class="name" title="${esc(m.name)}">${esc(m.name)}</td>${
+          m.days.map((d) => {
+            const cls = ["cell", d.n > 0 ? "on" : "", d.n > 1 ? "multi" : "", d.date === data.today ? "todaycol" : ""].join(" ");
+            const tip = `${esc(m.name)} · ${thaiDate(d.date)} · ${d.n ? d.n + " รอบ" : "ไม่ได้ออก"}`;
+            return `<td><div class="${cls}" title="${tip}"></div></td>`;
+          }).join("")
+        }</tr>`).join("")
+      }</tbody></table></div>
+    </div>`;
+
+  const ranked = [...c.members].sort((a, b) =>
+    b.week_days - a.week_days || b.streak - a.streak || b.total_days - a.total_days);
+  const medals = ["🥇", "🥈", "🥉"];
+  const rank = `<div class="card">
+      <h2>อันดับ 7 วันล่าสุด</h2>
+      <table class="rank">
+        <thead><tr><th></th><th>ชื่อ</th><th class="num">7 วัน</th><th class="num">ต่อเนื่อง</th><th class="num">รวม</th></tr></thead>
+        <tbody>${ranked.map((m, i) => `<tr>
+          <td>${m.week_days ? (medals[i] || i + 1 + ".") : "—"}</td>
+          <td>${esc(m.name)}</td>
+          <td class="num">${m.week_days}/7</td>
+          <td class="num">${m.streak > 1 ? m.streak + " วัน" : "—"}</td>
+          <td class="num">${m.total_days}</td>
+        </tr>`).join("")}</tbody>
+      </table>
+    </div>`;
+
+  const log = `<div class="card">
+      <h2>เช็คอินวันนี้</h2>
+      ${c.today_log.length ? `<ul class="log">${c.today_log.map((w) => {
+        const bits = [];
+        if (w.duration_min) bits.push(w.duration_min + " นาที");
+        if (w.kcal) bits.push(w.kcal + " แคล");
+        return `<li>
+          <span class="who">${esc(w.name)}</span>
+          <span class="what">${esc(w.activity)}${bits.length ? " — " + bits.join(" · ") : ""}</span>
+          <span class="when">${w.source === "image" ? "📸 " : ""}${w.time}</span>
+        </li>`;
+      }).join("")}</ul>` : `<div class="empty">ยังไม่มีใครเช็คอินวันนี้</div>`}
+    </div>`;
+
+  return `<div class="group-head">
+      <span class="group-name">${esc(c.name)}</span>
+      <span class="group-meta">${total} คน</span>
+    </div>${todayCard}${heat}${rank}${log}`;
+}
+
+keyFromUrl();
+load();
+</script>
+</body>
+</html>

@@ -33,6 +33,7 @@ const env = {
   LINE_CHANNEL_ACCESS_TOKEN: 'token',
   GEMINI_API_KEY: 'key',
   DASHBOARD_KEY: 'dash',
+  ASSETS: { fetch: async (u) => new Response('<!DOCTYPE html>' + String(u), { status: 200 }) },
 };
 
 // ---- ดัก fetch ----
@@ -182,3 +183,41 @@ console.log('\n\n===== ข้อมูลในฐานข้อมูล =====
 console.log('workouts:', JSON.stringify(db.prepare('SELECT line_user_id, activity, logged_date, message_id, reply_message_id FROM workouts').all(), null, 0));
 console.log('members :', JSON.stringify(db.prepare('SELECT line_user_id, display_name, active FROM challenge_members').all(), null, 0));
 console.log('usage   :', JSON.stringify(db.prepare('SELECT kind, label, n FROM api_usage').all(), null, 0));
+
+// ---- API ของหน้า dashboard — จับ SQL ผิดในหน้าเว็บก่อนขึ้นของจริง ----
+async function api(path) {
+  const res = await worker.fetch(new Request('https://x' + path), env, ctx);
+  if (res.status !== 200) throw new Error(`${path} → status ${res.status}`);
+  return res.json();
+}
+let failed = 0;
+const check = (label, ok) => { console.log(`  ${ok ? 'OK ' : 'พัง'} ${label}`); if (!ok) failed++; };
+
+console.log('\n\n===== API หน้าเว็บ =====');
+const ch = await api('/api/challenge?days=14&key=dash');
+console.log(`/api/challenge → ${ch.chats.length} กลุ่ม · ช่วง ${ch.dates.length} วัน · วันนี้ ${ch.today}`);
+for (const c of ch.chats) {
+  console.log(`  [${c.name}] ${c.members.length} คน · เช็คอินวันนี้ ${c.today_log.length} รายการ`);
+  for (const m of c.members) {
+    console.log(`     ${m.name}: 7 วัน ${m.week_days} · ต่อเนื่อง ${m.streak} · รวม ${m.total_days}` +
+                ` · วันนี้ ${m.done_today ? 'ออกแล้ว' : 'ยังไม่ออก'} · ช่องในกริด ${m.days.length}`);
+  }
+}
+check('มีกลุ่มชาเลนจ์อย่างน้อย 1 กลุ่ม', ch.chats.length >= 1);
+check('สมาชิกครบเท่าที่สมัครไว้', ch.chats[0]?.members.length === 4);
+check('ทุกคนมีช่องกริดครบ 14 วัน', ch.chats[0]?.members.every(m => m.days.length === 14));
+check('done_today ตรงกับช่องของวันนี้',
+  ch.chats[0]?.members.every(m => m.done_today === (m.days.at(-1).n > 0)));
+check('total_days ไม่เกินจำนวนวันที่มีจริง', ch.chats[0]?.members.every(m => m.total_days >= m.week_days));
+
+const ov = await api('/api/overview?days=14&key=dash');
+console.log(`/api/overview → ${ov.users.length} คน`);
+
+const noKey = await worker.fetch(new Request('https://x/api/challenge'), env, ctx);
+check('ไม่ใส่ key ต้องโดนปฏิเสธ 401', noKey.status === 401);
+
+const wk = await worker.fetch(new Request('https://x/workout'), env, ctx);
+check('/workout เสิร์ฟหน้าชาเลนจ์ได้', wk.status === 200);
+
+if (failed) { console.error(`\n❌ เทสไม่ผ่าน ${failed} ข้อ`); process.exit(1); }
+console.log('\n✅ เทสผ่านหมด');

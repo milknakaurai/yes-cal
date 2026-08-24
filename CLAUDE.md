@@ -42,7 +42,11 @@ bash scripts/deploy.sh
 ## โครงสร้าง
 
 - `src/index.js` — Worker ทั้งหมด: LINE webhook + Gemini + D1 + dashboard API (`/api/overview`) + cron 22:00 ไทย (15:00 UTC) เตือนกลุ่มชาเลนจ์
-- `public/index.html` — dashboard หน้าเดียว ไม่มี dependency ภายนอก รองรับ dark mode
+- `public/index.html` — dashboard ฝั่งแคลอรี่ (`/`) ไม่มี dependency ภายนอก รองรับ dark mode
+- `public/workout.html` — dashboard ฝั่งชาเลนจ์ (`/workout`) กินข้อมูลจาก `/api/challenge`
+  แยกหน้า/แยก URL ตามที่เจ้าของขอ กลุ่มไหนเปิดโหมดชาเลนจ์จะโผล่ในหน้านี้เอง
+  ชื่อกลุ่มไม่ได้เก็บใน D1 — `groupName()` ถาม LINE `/group/{id}/summary` ตอนเปิดหน้า (ไม่กินโควตา push)
+  ทั้งสองหน้าใช้ `DASHBOARD_KEY` ตัวเดียวกัน เก็บใน localStorage คีย์ `yescal_key` และรับ `?key=` จาก URL ได้
 - `src/food-reference.js` — ตารางค่าโภชนาการอาหารไทย ~40 เมนู ที่ให้ Gemini ยึดก่อนประเมินเอง
 - `src/jokes.js` — คลังมุกของบอท สุ่มทุกครั้ง (ล้อความขี้เกียจได้ ห้ามล้อรูปร่าง/น้ำหนัก)
   **ตอนเช็คอินห้ามชม** — สมาชิกบอกว่าโดนชมทุกครั้งแล้วอึดอัด แต่ตอบสั้นเกินก็ไม่ชอบ
@@ -76,6 +80,9 @@ bash scripts/deploy.sh
 - คุยกับเจ้าของเป็น**ภาษาไทย**
 - ทำงานบน branch `claude/line-calorie-tracker-jmgcyz` เท่านั้น commit + push ทุกครั้งที่แก้เสร็จ
 - อย่า commit ค่า secret ลง repo (มี `.gitignore` กัน `.dev.vars` ไว้แล้ว)
+- **หน้าเว็บห้ามผูก `onkeydown` แบบ `(e) => e.key === "Enter" && go()`** — คีย์อื่นจะได้ค่า `false`
+  ซึ่งใน handler แบบ DOM0 แปลว่า preventDefault ผลคือ**พิมพ์ในช่องไม่ได้เลย** (เคยทำให้ล็อกอิน dashboard ไม่ได้)
+  ใช้ `<form onsubmit>` แทน ได้ทั้ง Enter และปุ่ม แถมมือถือขึ้นปุ่ม Go ให้ด้วย
 - **ทดสอบก่อน deploy ได้ด้วย `node scripts/e2e-test.mjs`** — จำลอง D1 ด้วย SQLite ในหน่วยความจำ (สร้างตารางจาก `schema.sql` จริง)
   แล้วยิง webhook event เหมือน LINE ส่งมา จับ SQL ผิด/ฟิลด์หายได้ทันที ควรรันทุกครั้งที่แก้ตรรกะโหมดชาเลนจ์
 - ทดสอบ dashboard ในเครื่องได้โดยเสิร์ฟ `public/index.html` คู่กับ mock `/api/overview` — `wrangler dev` (workerd) รันไม่ขึ้นบนเครื่องเจ้าของ

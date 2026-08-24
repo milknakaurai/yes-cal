@@ -37,6 +37,10 @@ export default {
     if (url.pathname.startsWith("/api/")) {
       return handleApi(url, request, env);
     }
+    // /workout → หน้าชาเลนจ์ (ปกติ static assets จับให้อยู่แล้ว อันนี้กันเหนียว)
+    if (url.pathname === "/workout" || url.pathname === "/workout/") {
+      return env.ASSETS.fetch(new URL("/workout.html", url));
+    }
     return new Response("Not found", { status: 404 });
   },
 
@@ -855,7 +859,93 @@ async function handleApi(url, request, env) {
     return jsonResponse({ today, users: out });
   }
 
+  // ข้อมูลสำหรับหน้า /workout — แยกจากฝั่งแคลอรี่คนละ endpoint คนละหน้า
+  if (url.pathname === "/api/challenge") {
+    const days = Math.min(parseInt(url.searchParams.get("days") || "14", 10) || 14, 90);
+    const dates = lastNDates(days);
+    const today = bkkToday();
+    const weekStart = bkkDateOffset(-6);
+
+    const chats = (await env.DB.prepare(
+      `SELECT id, type FROM chat_targets WHERE mode = 'challenge' ORDER BY created_at`
+    ).all()).results;
+
+    const out = [];
+    for (const c of chats) {
+      const members = (await env.DB.prepare(
+        `SELECT line_user_id, display_name FROM challenge_members
+         WHERE chat_id = ? AND active = 1 ORDER BY joined_at`
+      ).bind(c.id).all()).results;
+
+      // เช็คอินย้อนหลังในช่วงที่ขอ (นับจำนวนครั้งต่อวัน เผื่อวันไหนออกหลายรอบ)
+      const grid = (await env.DB.prepare(
+        `SELECT line_user_id, logged_date, COUNT(*) AS n FROM workouts
+         WHERE chat_id = ? AND logged_date >= ? GROUP BY line_user_id, logged_date`
+      ).bind(c.id, dates[0]).all()).results;
+      const byUser = {};
+      for (const r of grid) (byUser[r.line_user_id] ||= {})[r.logged_date] = r.n;
+
+      const stats = (await env.DB.prepare(
+        `SELECT line_user_id,
+                COUNT(DISTINCT CASE WHEN logged_date >= ? THEN logged_date END) AS week_days,
+                COUNT(DISTINCT logged_date) AS total_days
+         FROM workouts WHERE chat_id = ? GROUP BY line_user_id`
+      ).bind(weekStart, c.id).all()).results;
+      const statOf = Object.fromEntries(stats.map((r) => [r.line_user_id, r]));
+
+      const todayRows = (await env.DB.prepare(
+        `SELECT line_user_id, activity, duration_min, kcal, source, created_at FROM workouts
+         WHERE chat_id = ? AND logged_date = ? ORDER BY id`
+      ).bind(c.id, today).all()).results;
+      const nameOf = Object.fromEntries(members.map((m) => [m.line_user_id, m.display_name]));
+
+      const memberOut = [];
+      for (const m of members) {
+        const mine = byUser[m.line_user_id] || {};
+        memberOut.push({
+          id: m.line_user_id,
+          name: m.display_name,
+          days: dates.map((d) => ({ date: d, n: mine[d] || 0 })),
+          week_days: statOf[m.line_user_id]?.week_days || 0,
+          total_days: statOf[m.line_user_id]?.total_days || 0,
+          streak: await getStreak(env, c.id, m.line_user_id),
+          done_today: (mine[today] || 0) > 0,
+        });
+      }
+
+      out.push({
+        id: c.id,
+        type: c.type,
+        name: await groupName(env, c),
+        members: memberOut,
+        today_log: todayRows.map((w) => ({
+          name: nameOf[w.line_user_id] || "ไม่ทราบชื่อ",
+          activity: w.activity,
+          duration_min: w.duration_min,
+          kcal: w.kcal,
+          source: w.source,
+          time: bkkTimeOf(w.created_at),
+        })),
+      });
+    }
+    return jsonResponse({ today, dates, chats: out });
+  }
+
   return jsonResponse({ error: "not found" }, 404);
+}
+
+// ชื่อกลุ่มไม่ได้เก็บไว้ใน D1 — ถาม LINE ตอนเปิดหน้า (endpoint นี้ไม่กินโควตา push)
+async function groupName(env, chat) {
+  if (chat.type !== "group") return chat.type === "room" ? "ห้องแชท" : "แชทส่วนตัว";
+  try {
+    const r = await fetch(`${LINE_API}/group/${chat.id}/summary`, {
+      headers: { Authorization: `Bearer ${sec(env, "LINE_CHANNEL_ACCESS_TOKEN")}` },
+    });
+    if (!r.ok) return "กลุ่มชาเลนจ์";
+    return (await r.json()).groupName || "กลุ่มชาเลนจ์";
+  } catch {
+    return "กลุ่มชาเลนจ์";
+  }
 }
 
 function jsonResponse(obj, status = 200) {
