@@ -1,6 +1,9 @@
 # Deploy อัตโนมัติทุกครั้งที่ push ขึ้น branch นี้
 # ต้องตั้ง repository secret ชื่อ CLOUDFLARE_API_TOKEN ไว้ครั้งเดียว ที่
-#   GitHub → repo → Settings → Secrets and variables → Actions → New repository secret
+#   GitHub → repo → Settings → Secrets and variables → Actions
+#   → แท็บ "Secrets" → ปุ่ม "New repository secret"
+# ระวัง: ถ้าไปตั้งในแท็บ "Variables" / ใน Environment / ใน Codespaces หรือ Dependabot
+#        workflow จะมองไม่เห็น (ค่าจะว่างเปล่า) — ต้องเป็น repository secret เท่านั้น
 # (secret ของบอทเอง — LINE / Gemini / Dashboard — ตั้งไว้ที่ Worker แล้ว คนละที่กัน ไม่ต้องยุ่ง)
 name: Deploy to Cloudflare Workers
 
@@ -15,6 +18,20 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # เช็คก่อนเลย จะได้ไม่ต้องรอเทสจบแล้วค่อยพังตอนท้าย
+      - name: ตรวจว่ามี CLOUDFLARE_API_TOKEN หรือยัง
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CF_TOKEN" ]; then
+            echo "::error::ไม่เจอ repository secret ชื่อ CLOUDFLARE_API_TOKEN — deploy ไม่ได้"
+            echo "ไปตั้งที่ Settings → Secrets and variables → Actions → แท็บ Secrets → New repository secret"
+            echo "ชื่อต้องสะกดตรงเป๊ะว่า CLOUDFLARE_API_TOKEN (ตัวใหญ่ทั้งหมด มีขีดล่าง)"
+            echo "ถ้าตั้งไว้ในแท็บ Variables หรือใน Environment workflow จะมองไม่เห็น ต้องย้ายมาที่ Secrets"
+            exit 1
+          fi
+          echo "เจอ CLOUDFLARE_API_TOKEN แล้ว ไปต่อได้"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -30,3 +47,5 @@ jobs:
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
