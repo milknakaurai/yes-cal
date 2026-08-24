@@ -709,6 +709,26 @@ export function countsAsCheckin(w) {
 export const normalizeWorkouts = (provider, body) =>
   provider === "whoop" ? normalizeWhoopWorkouts(body) : normalizeGoogleWorkouts(body);
 
+// ดึงรายการออกกำลังกายล่าสุดของคนคนเดียว แปลงเป็นรูปแบบกลางแล้ว
+// คืน [] ถ้าเชื่อมไม่ได้ — ให้ตัวเรียกทำงานต่อกับคนอื่นได้ ไม่ล้มทั้งรอบ
+export async function recentWorkouts(env, lineUserId, provider) {
+  const token = await getAccessToken(env, lineUserId, provider);
+  if (!token) return [];
+  try {
+    const res = await fetch(DATA_URLS[provider].workout, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      console.error(`ดึง workout ของ ${provider} ไม่ได้: ${res.status}`);
+      return [];
+    }
+    return normalizeWorkouts(provider, await res.json());
+  } catch (e) {
+    console.error(`ดึง workout ของ ${provider} พัง`, e.message);
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------- ดูข้อมูลดิบ (ไว้ debug)
 
 // endpoint ที่ผู้ให้บริการใช้ดึงข้อมูลจริง — ฝั่ง Google ยืนยันจาก discovery doc แล้ว

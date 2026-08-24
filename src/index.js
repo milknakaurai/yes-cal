@@ -65,11 +65,14 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // 15:00 UTC = 22:00 ไทย → เตือนกลุ่มชาเลนจ์
-    // 14:00 UTC = 21:00 ไทย → สรุปแคลอรี่ (ปิดอยู่ เปิดได้โดยเพิ่ม cron ใน wrangler.toml)
-    ctx.waitUntil(
-      event.cron === "0 14 * * *" ? pushNightlySummary(env) : pushChallengeReminder(env)
-    );
+    // แยกตาม cron ให้ชัด — เดิมใช้ ternary แล้ว cron ใหม่ทุกตัวจะไปโผล่เป็นการทวงกลุ่ม
+    const JOBS = {
+      "0 14 * * *": pushNightlySummary,      // 21:00 ไทย — สรุปแคลอรี่ (ปิดอยู่)
+      "0 15 * * *": pushChallengeReminder,   // 22:00 ไทย — ทวงกลุ่มชาเลนจ์
+      "0 */3 * * *": syncWearableCheckins,   // ทุก 3 ชม. — ดึงการออกกำลังกายจากนาฬิกา
+    };
+    const job = JOBS[event.cron] || syncWearableCheckins;
+    ctx.waitUntil(job(env));
   },
 };
 
@@ -940,6 +943,63 @@ async function getDayTotals(env, userId, date) {
   return row;
 }
 
+// ---------------------------------------------------------------- เช็คอินอัตโนมัติจากนาฬิกา
+
+// ดึงการออกกำลังกายของทุกคนที่เชื่อมนาฬิกาไว้ แล้วเช็คอินให้ในกลุ่มชาเลนจ์ที่เขาเป็นสมาชิก
+//
+// ตั้งใจไม่ push บอกในกลุ่ม — โควตา push ของ LINE มีจำกัด และเจ้าของกำหนดไว้ว่า
+// push มีได้ตัวเดียวคือการทวงตอน 22:00 · รายการที่เช็คอินให้จะไปโผล่ในข้อความทวง
+// ในคำสั่ง "วันนี้" และในหน้าสถิติของกลุ่มเอง
+//
+// กันบันทึกซ้ำด้วยการเก็บ id ของผู้ให้บริการไว้ในคอลัมน์ message_id (มี index อยู่แล้ว)
+// รูปแบบ "whoop:<uuid>" — ไม่ชนกับ message id ของ LINE และไม่ต้องเพิ่มคอลัมน์ใหม่
+async function syncWearableCheckins(env) {
+  await W.ensureWearableTables(env);
+  const links = (await env.DB.prepare(
+    `SELECT line_user_id, provider FROM device_links`
+  ).all().catch(() => ({ results: [] }))).results;
+
+  let added = 0;
+  for (const link of links) {
+    const chats = (await env.DB.prepare(
+      `SELECT m.chat_id FROM challenge_members m
+         JOIN chat_targets t ON t.id = m.chat_id AND t.mode = 'challenge'
+        WHERE m.line_user_id = ? AND m.active = 1`
+    ).bind(link.line_user_id).all()).results;
+    if (!chats.length) continue;
+
+    const workouts = await W.recentWorkouts(env, link.line_user_id, link.provider);
+    // ย้อนหลัง 2 วันพอ เผื่อข้อมูลมาช้าหรือ cron พลาดไปรอบหนึ่ง
+    const from = bkkDateOffset(-1);
+    for (const w of workouts) {
+      if (w.date < from) continue;
+      if (!W.countsAsCheckin(w).ok) continue;
+      const key = `${link.provider}:${w.external_id}`;
+      for (const { chat_id } of chats) {
+        const dup = await env.DB.prepare(
+          `SELECT id FROM workouts WHERE chat_id = ? AND message_id = ?`
+        ).bind(chat_id, key).first();
+        if (dup) continue;
+        await env.DB.prepare(
+          `INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, message_id, logged_date)
+           VALUES (?, ?, ?, ?, ?, 'device', ?, ?)`
+        ).bind(chat_id, link.line_user_id, w.activity, w.duration_min || null, w.kcal || null, key, w.date).run();
+        added++;
+      }
+    }
+  }
+  console.log(`ซิงก์นาฬิกา: เช็คอินให้ ${added} รายการ`);
+  return added;
+}
+
+// สั่งซิงก์เองได้ ไม่ต้องรอ cron — ไว้ทดสอบและไว้ใช้ตอนเพิ่งออกกำลังกายเสร็จ
+async function replySync(env, event) {
+  const added = await syncWearableCheckins(env);
+  return lineReply(env, event.replyToken, added
+    ? `ซิงก์จากนาฬิกาแล้ว เช็คอินเพิ่มให้ ${added} รายการ ⌚\nพิมพ์ "วันนี้" เพื่อดูผล`
+    : "ซิงก์แล้วครับ ยังไม่มีรายการใหม่จากนาฬิกา ⌚\n(ลองซิงก์แอปนาฬิกาในมือถือก่อน แล้วสั่งใหม่อีกที)");
+}
+
 // ---------------------------------------------------------------- OAuth เชื่อมนาฬิกา
 
 async function handleOAuth(url, env, provider, step) {
@@ -1183,6 +1243,9 @@ async function handleWearableCommand(env, event, userId, chatId, text) {
   }
   if (/^(ตัดการเชื่อมต่อ|ยกเลิกนาฬิกา|เลิกเชื่อมนาฬิกา|disconnect)$/i.test(text)) {
     return { handled: true, promise: replyDisconnect(env, event, userId) };
+  }
+  if (/^(ซิงก์|ซิ้งค์|sync|ดึงข้อมูลนาฬิกา)$/i.test(text)) {
+    return { handled: true, promise: replySync(env, event) };
   }
   if (/^(นอน|การนอน|เมื่อคืนนอน|sleep|recovery|readiness)$/i.test(text)) {
     return { handled: true, promise: replySleep(env, event, chatId, userId) };
@@ -2186,6 +2249,7 @@ function challengeHelpText() {
   return [
     "โหมดชาเลนจ์ออกกำลังกาย 💪",
     "",
+    "⌚ เชื่อมนาฬิกา — ต่อ WHOOP/Fitbit แล้วบอทเช็คอินให้เอง ไม่ต้องส่งรูป",
     "📸 ส่งรูป \"หน้าจอสรุปผล\" — นาฬิกา แอปวิ่ง หรือหน้าจอลู่วิ่งที่เห็นตัวเลข",
     "   (รูปยิม รองเท้า เซลฟี่ ไม่นับนะ ต้องเห็นตัวเลข)",
     "✍️ หรือพิมพ์บอก เช่น \"วิ่ง 5 กม.\" \"เล่นเวท 1 ชม.\"",
@@ -2199,6 +2263,7 @@ function challengeHelpText() {
     "เตือน — แท็กชื่อคนที่ยังไม่ออก (เด้งแจ้งเตือนถึงตัว)",
     "อันดับ — ตารางคะแนน 7 วันล่าสุด",
     "เว็บ — ลิงก์หน้าสถิติของกลุ่มนี้ (กลุ่มอื่นเปิดไม่ได้)",
+    "ซิงก์ — ดึงการออกกำลังกายจากนาฬิกามาเช็คอินให้ทันที",
     "ลิงก์ใหม่ — เปลี่ยนลิงก์ ถ้าอันเก่าหลุดออกนอกกลุ่ม",
     "ออกจากชาเลนจ์ — ถอนตัว",
     "",

@@ -47,6 +47,8 @@ const replies = [];
 let geminiReply = null;
 let suggestReply = null;
 let lastGeminiPrompt = '';
+const whoopWorkoutFixture = JSON.parse(
+  readFileSync(new URL('./fixtures/whoop-workout.json', import.meta.url), 'utf8'));
 let lastTokenRequest = null;
 let tokenSeq = 0;
 let tokenFails = false;
@@ -65,6 +67,11 @@ globalThis.fetch = async (url, opts) => {
     if (tokenFails) return { ok: false, status: 400, text: async () => '{"error":"invalid_grant"}' };
     return { ok: true, status: 200, text: async () => JSON.stringify({
       access_token: 'AT-' + (++tokenSeq), refresh_token: 'RT-' + tokenSeq, expires_in: 3600, scope: 'read:workout' }) };
+  }
+  if (u.includes('/developer/v2/activity/workout')) {
+    return { ok: true, status: 200,
+      json: async () => whoopWorkoutFixture,
+      text: async () => JSON.stringify(whoopWorkoutFixture) };
   }
   if (u.includes('/user/profile/basic') || u.endsWith('/v4/users/me/identity')) {
     return { ok: true, status: 200, json: async () => ({ user_id: 42, first_name: 'Milk', last_name: 'N' }) };
@@ -97,17 +104,26 @@ export let lastBotMessageId = null;
 
 const worker = (await import(new URL('../src/index.js', import.meta.url))).default;
 const WN = await import(new URL('../src/wearables.js', import.meta.url));
-const ctx = { waitUntil: (p) => p };
+// เก็บงานเบื้องหลังที่ worker ฝากไว้ แล้วให้ settle() รอจนจบจริง ๆ
+// (เดิม waitUntil คืน promise เฉย ๆ ไม่มีใครรอ เทสเลยตรวจผลก่อนงานเสร็จ)
+const pending = [];
+const ctx = { waitUntil: (p) => { pending.push(Promise.resolve(p).catch((e) => console.error('waitUntil พัง', e))); return p; } };
 
 async function send(event) {
   replies.length = 0;
   const body = JSON.stringify({ events: [event] });
   const sig = crypto.createHmac('sha256', SECRET).update(body).digest('base64');
   const res = await worker.fetch(new Request('https://x/webhook', { method: 'POST', headers: { 'x-line-signature': sig }, body }), env, ctx);
-  await new Promise(r => setImmediate(r));
+  await settle();
   if (res.status !== 200) throw new Error('webhook status ' + res.status);
   return replies.map(m => m.text);
 }
+// รอให้งานเบื้องหลังทั้งหมดจบก่อนตรวจผล — งานหนึ่งอาจฝากงานใหม่ต่อ จึงวนจนไม่เหลือ
+const settle = async () => {
+  for (let i = 0; i < 50 && pending.length; i++) await Promise.all(pending.splice(0));
+  await new Promise((r) => setImmediate(r));
+};
+
 let msgSeq = 1000;
 const textEventIn = (groupId, userId, text, extra = {}) => ({
   type: 'message', replyToken: 'rt', source: { type: 'group', groupId, userId },
@@ -425,6 +441,46 @@ show('Milk พิมพ์ "ตัดการเชื่อมต่อ"', awa
 check('ตัดการเชื่อมต่อแล้วโทเคนหายหมด',
   db.prepare(`SELECT COUNT(*) AS n FROM device_links WHERE line_user_id='U_DM'`).get().n === 0);
 
+// ---- เช็คอินอัตโนมัติจากนาฬิกา ----
+console.log('\n--- เช็คอินอัตโนมัติจากนาฬิกา ---');
+{
+  // Peach อยู่ในกลุ่มชาเลนจ์ G1 อยู่แล้ว — ผูกนาฬิกาให้แล้วสั่งซิงก์
+  const linkP = (await send(textEvent('U_PEACH', 'เชื่อมนาฬิกา')))[0].match(/connect\?t=([a-f0-9]+)/)[1];
+  const st = new URL((await worker.fetch(new Request(`https://x/oauth/whoop/start?t=${linkP}`), env, ctx))
+    .headers.get('location')).searchParams.get('state');
+  await worker.fetch(new Request(`https://x/oauth/whoop/callback?code=C&state=${st}`), env, ctx);
+
+  const before = db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE source='device'`).get().n;
+  show('Peach พิมพ์ "ซิงก์"', await send(textEvent('U_PEACH', 'ซิงก์')));
+  const rows = db.prepare(
+    `SELECT activity, duration_min, kcal, logged_date, message_id FROM workouts
+      WHERE source='device' ORDER BY id`).all();
+  rows.forEach((r) => console.log(`   ${r.logged_date} ${r.activity} ${r.duration_min} น. ${r.kcal} แคล [${r.message_id}]`));
+  check('เช็คอินให้จากนาฬิกาจริง', rows.length > before);
+  check('บันทึกที่มาเป็น device', rows.every((r) => r.message_id.startsWith('whoop:')));
+  check('ไม่เอารายการเดินเบา ๆ (strain 1.4) มาเช็คอิน',
+    !rows.some((r) => r.activity === 'เดิน' && r.duration_min === 40));
+  check('เฉพาะย้อนหลังไม่เกิน 2 วัน',
+    rows.every((r) => r.logged_date >= new Date(Date.now() + 7 * 3600e3 - 2 * 86400e3).toISOString().slice(0, 10)));
+
+  // สั่งซ้ำต้องไม่บันทึกซ้ำ
+  await send(textEvent('U_PEACH', 'ซิงก์'));
+  const after = db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE source='device'`).get().n;
+  check('สั่งซิงก์ซ้ำไม่บันทึกซ้ำ', after === rows.length);
+
+  // รายการที่เช็คอินให้ต้องนับรวมในคำสั่ง "วันนี้" ด้วย
+  CURRENT_NAME = 'Milk';
+  const today = await send(textEvent('U_MILK', 'วันนี้'));
+  check('รายการจากนาฬิกานับรวมในเช็คชื่อวันนี้', today[0].includes('Peach'));
+
+  // cron ทุก 3 ชม. ต้องไปเรียกงานซิงก์ ไม่ใช่ไปทวงกลุ่ม
+  await settle();
+  replies.length = 0;
+  await worker.scheduled({ cron: '0 */3 * * *' }, env, ctx);
+  await settle();
+  check('cron ซิงก์ไม่ push ทวงกลุ่ม', replies.length === 0);
+}
+
 // ---- การนอน + recovery ----
 console.log('\n--- การนอน + recovery ---');
 // ตัวอย่าง response ตามสเปกของแต่ละเจ้า (WHOOP ยังไม่ได้ยืนยันกับของจริง)
@@ -551,8 +607,11 @@ check('/api/sleep ต้องมี DASHBOARD_KEY', sleepNoAuth.status === 401)
 show('Milk พิมพ์ "นอน" ตอนยังไม่ได้เชื่อมนาฬิกา', await send(dmEvent('U_DM', 'นอน')));
 
 // ---- ดูข้อมูลดิบ ----
-const peekNoLink = await api('/api/device-peek?key=dash&provider=whoop&kind=workout');
-check('ยังไม่มีใครเชื่อม → บอกเหตุผล ไม่ระเบิด', String(peekNoLink.error || '').includes('ยังไม่มีใครเชื่อม'));
+const peeked = await api('/api/device-peek?key=dash&provider=whoop&kind=workout');
+check('ดูข้อมูลดิบจากบัญชีที่เชื่อมไว้ได้', peeked.status === 200 && !!peeked.body?.records?.length);
+const peekNoLink = await api('/api/device-peek?key=dash&provider=google&kind=workout');
+check('ยี่ห้อที่ยังไม่มีใครเชื่อม → บอกเหตุผล ไม่ระเบิด',
+  String(peekNoLink.error || '').includes('ยังไม่มีใครเชื่อม'));
 const peekNoAuth = await worker.fetch(new Request('https://x/api/device-peek?provider=whoop'), env, ctx);
 check('device-peek ต้องมี DASHBOARD_KEY', peekNoAuth.status === 401);
 const peekBad = await api('/api/device-peek?key=dash&provider=มั่ว&kind=workout');
@@ -596,11 +655,11 @@ check('distance ที่เป็น null ไม่กลายเป็น 0',
 check('รายการที่มีระยะทางอ่านได้', wo[1].distance_m === 72);
 
 // รายการที่ score_state ไม่ใช่ SCORED ต้องไม่หยิบตัวเลขมั่ว ๆ มาใช้
-const pending = WN.normalizeWhoopWorkouts({ records: [{
+const unscored = WN.normalizeWhoopWorkouts({ records: [{
   ...whoopBody.records[0], id: 'x', score_state: 'PENDING_SCORE' }] })[0];
 check('ยังไม่ได้คะแนน → ไม่เอาตัวเลขมาใช้',
-  pending.kcal === null && pending.strain === null && pending.scored === false);
-check('แต่ยังรู้ว่าทำอะไรกี่นาที', pending.activity === 'เวทเทรนนิ่ง' && pending.duration_min === 41);
+  unscored.kcal === null && unscored.strain === null && unscored.scored === false);
+check('แต่ยังรู้ว่าทำอะไรกี่นาที', unscored.activity === 'เวทเทรนนิ่ง' && unscored.duration_min === 41);
 
 // ฝั่ง Google — payload จริงจาก Fitbit (24 ส.ค. 2026)
 const googleBody = JSON.parse(readFileSync(new URL('./fixtures/google-workout.json', import.meta.url), 'utf8'));

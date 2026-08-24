@@ -43,6 +43,10 @@ bash scripts/deploy.sh
 
 - `PRETTY_PATHS` ใน `src/index.js` — แม็ป `/workout` `/calories` `/privacy` `/terms` ไปหาไฟล์จริง
 - `src/index.js` — Worker ทั้งหมด: LINE webhook + Gemini + D1 + dashboard API (`/api/overview`) + cron 22:00 ไทย (15:00 UTC) เตือนกลุ่มชาเลนจ์
+  **cron แยกงานด้วย map `JOBS` ตาม `event.cron`** — เดิมใช้ ternary แล้ว cron ใหม่ทุกตัวจะกลายเป็นการทวงกลุ่ม
+  `0 */3 * * *` = ซิงก์นาฬิกามาเช็คอินให้ (`syncWearableCheckins`) **ตั้งใจไม่ push บอกในกลุ่ม**
+  กันซ้ำโดยเก็บ `"<provider>:<id>"` ลงคอลัมน์ `workouts.message_id` ที่มี index อยู่แล้ว ไม่ต้องเพิ่มคอลัมน์
+  สั่งเองได้ด้วยคำสั่ง `ซิงก์` ในแชท
 - `public/index.html` — **หน้าเว็บสาธารณะ** (`/`) เน้นเรื่องบอทชาเลนจ์ ไม่ต้องใส่รหัส
   มี `/privacy` กับ `/terms` คู่กัน — **จำเป็นต้องมี** เพราะ Whoop และ Google บังคับให้ใส่ URL สองอันนี้
   ตอนขอสร้างแอป และเอาไปโชว์ในหน้าขอสิทธิ์ให้ผู้ใช้อ่าน ห้ามเอาออกหรือย้าย URL
