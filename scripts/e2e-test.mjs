@@ -455,6 +455,38 @@ check('client_id เพี้ยน → หยุดเองพร้อมบ�
   blocked.status === 400 && blockedText.includes('อักขระแปลกปลอม'));
 check('ไม่ปล่อยให้เด้งไปเจอหน้า error ของผู้ให้บริการ', blocked.status !== 302);
 
+// ---- แปลงข้อมูลนาฬิกา (ใช้ payload จริงจาก WHOOP ที่เก็บไว้ใน fixtures) ----
+console.log('\n--- แปลงข้อมูลนาฬิกา ---');
+const WN = await import(new URL('../src/wearables.js', import.meta.url));
+const whoopBody = JSON.parse(readFileSync(new URL('./fixtures/whoop-workout.json', import.meta.url), 'utf8'));
+const wo = WN.normalizeWhoopWorkouts(whoopBody);
+check('อ่านครบทุกรายการ', wo.length === 5);
+const lift = wo[0];
+check('แปลงชื่อกีฬาเป็นไทย', lift.activity === 'เวทเทรนนิ่ง');
+check('คิดนาทีจาก start/end (WHOOP ไม่มีฟิลด์ระยะเวลา)', lift.duration_min === 41);
+check('แปลง kilojoule เป็นแคลอรี่', lift.kcal === Math.round(251.73279 / 4.184));
+check('เก็บ strain กับหัวใจเฉลี่ย', lift.strain === 9.5 && lift.avg_hr === 99);
+check('วันที่เป็นเวลาไทย', lift.date === '2026-08-23');
+check('distance ที่เป็น null ไม่กลายเป็น 0', lift.distance_m === null);
+check('รายการที่มีระยะทางอ่านได้', wo[1].distance_m === 72);
+
+// รายการที่ score_state ไม่ใช่ SCORED ต้องไม่หยิบตัวเลขมั่ว ๆ มาใช้
+const pending = WN.normalizeWhoopWorkouts({ records: [{
+  ...whoopBody.records[0], id: 'x', score_state: 'PENDING_SCORE' }] })[0];
+check('ยังไม่ได้คะแนน → ไม่เอาตัวเลขมาใช้',
+  pending.kcal === null && pending.strain === null && pending.scored === false);
+check('แต่ยังรู้ว่าทำอะไรกี่นาที', pending.activity === 'เวทเทรนนิ่ง' && pending.duration_min === 41);
+
+// ฝั่ง Google — ตัวเลขหลายตัวมาเป็น string ต้องแปลงก่อน
+const gw = WN.normalizeGoogleWorkouts({ dataPoints: [{ name: 'users/me/dataTypes/exercise/dataPoints/1', exercise: {
+  displayName: 'Morning run', exerciseType: 'RUNNING', activeDuration: '1830s',
+  interval: { startTime: '2026-08-24T00:10:00Z', endTime: '2026-08-24T00:45:00Z' },
+  metricsSummary: { caloriesKcal: 312.7, averageHeartRateBeatsPerMinute: '148', distanceMillimeters: 5200000, steps: '6100' } } }] })[0];
+check('Google: อ่าน activeDuration เป็นนาที', gw.duration_min === 31);
+check('Google: หัวใจที่เป็น string แปลงเป็นตัวเลข', gw.avg_hr === 148);
+check('Google: มิลลิเมตร → เมตร', gw.distance_m === 5200);
+check('Google: ปัดแคลอรี่', gw.kcal === 313);
+
 console.log('\n--- หน้าเว็บสาธารณะ ---');
 for (const [path, file] of [['/workout', 'workout.html'], ['/calories', 'calories.html'], ['/connect', 'connect.html'],
                             ['/privacy', 'privacy.html'], ['/terms', 'terms.html']]) {

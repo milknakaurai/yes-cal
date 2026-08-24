@@ -89,8 +89,8 @@ DataPoint.dailyHeartRateVariability.averageHeartRateVariabilityMilliseconds
 
 ## ฝั่ง Whoop — WHOOP API v2
 
-⚠️ **ส่วนนี้ยังไม่ได้ยืนยันจากเอกสารตรง ๆ** — `developer.whoop.com` และ `api.prod.whoop.com`
-ถูกบล็อกจาก session นี้ ข้อมูลด้านล่างมาจากผลค้นหาและต้องเทียบกับ response จริงอีกครั้งตอนต่อได้แล้ว
+✅ **ยืนยันจาก response จริงแล้วเมื่อ 24 ส.ค. 2026** — เก็บตัวอย่างไว้ที่ `scripts/fixtures/whoop-workout.json`
+และมีเทสอ่านไฟล์นั้นจริงใน `scripts/e2e-test.mjs`
 
 - สร้างแอปเองที่ developer.whoop.com → Dashboard (ได้ Client ID/Secret ทันที ไม่ต้องรออนุมัติ · ทำได้ 5 แอป)
 - OAuth 2.0 · ต้องระบุ redirect URL ให้ตรงกับที่ตั้งใน dashboard · ต้องขออย่างน้อย 1 scope
@@ -102,10 +102,27 @@ DataPoint.dailyHeartRateVariability.averageHeartRateVariabilityMilliseconds
 | การนอน | `GET /v2/activity/sleep` |
 | Recovery | `GET /v2/recovery` |
 
-ฟิลด์ที่คาดว่าจะใช้ (ต้องตรวจกับของจริง):
-`score.strain`, `score.average_heart_rate`, `score.kilojoule` (→ แคล = kJ ÷ 4.184),
-`score.sleep_performance_percentage`, `score.recovery_score`, `score.resting_heart_rate`,
-`score.hrv_rmssd_milli` · ทุก object มี `score_state` ต้องเช็คว่าเป็น `SCORED` ก่อนใช้ค่า
+รูปแบบ response จริงของ `/v2/activity/workout`:
+
+```json
+{ "records": [ {
+    "id": "71c7244a-…", "user_id": 36795904,
+    "start": "2026-08-23T08:11:00.270Z", "end": "2026-08-23T08:51:59.280Z",
+    "timezone_offset": "+07:00", "sport_name": "weightlifting", "sport_id": 45,
+    "score_state": "SCORED",
+    "score": { "strain": 9.508416, "average_heart_rate": 99, "max_heart_rate": 139,
+               "kilojoule": 251.73279, "percent_recorded": 0.99999595,
+               "distance_meter": null, "zone_durations": { … } }
+  } ], "next_token": "…" }
+```
+
+สิ่งที่ต้องรู้:
+- **ไม่มีฟิลด์ระยะเวลา** ต้องคิดเอง `end - start`
+- **แคลอรี่ต้องแปลงจาก kJ** → `kilojoule / 4.184`
+- `sport_name` เป็น slug อังกฤษ (`weightlifting`, `reformer-pilates`) แปลไทยที่ `SPORT_TH` ใน `src/wearables.js`
+- `score_state` ต้องเป็น `SCORED` ก่อนถึงใช้ค่าใน `score` ได้ (ค่าอื่นเช่น `PENDING_SCORE`)
+- `distance_meter` เป็น `null` ได้บ่อย อย่าปล่อยให้กลายเป็น 0
+- `timezone_offset` เป็น `+07:00` ตรงกับเวลาไทยพอดี
 
 ---
 
@@ -172,5 +189,12 @@ npx wrangler secret put TOKEN_KEY        # สุ่มเอง 32+ ตัว�
 4. Cron ดึงข้อมูลย้อนหลัง 2 วันทุกรอบ (กันข้อมูลมาช้า) แล้ว upsert ลง `device_daily`
 5. เจอ workout ของสมาชิกชาเลนจ์ → เช็คอินอัตโนมัติ (`workouts.source = 'device'`)
 6. หน้า dashboard เพิ่มส่วนนอน/recovery + คำสั่ง `นอน` ในแชท
+
+### ⚠️ ข้อควรระวังที่เจอจากข้อมูลจริง
+
+WHOOP จับ "walking" อัตโนมัติแม้แต่ตอนเดินไปเดินมาในบ้าน — ในตัวอย่างจริงมีรายการ
+**เดิน 40 นาที strain 1.4 ระยะทาง 72 เมตร** ถ้าเช็คอินอัตโนมัติแบบไม่กรอง
+คนจะได้เครดิตจากการเดินไปเข้าห้องน้ำ ซึ่งขัดกับกติกาที่เจ้าของยืนยันมาตลอดว่า
+"เช็คอินต้องมีของจริง" — **ต้องมีเกณฑ์กรองก่อนเปิดใช้เช็คอินอัตโนมัติ**
 
 **ไม่ทำ**: ไม่เอาแคลที่เผาไปหักในโหมดนับแคล (เจ้าของเลือกไม่เอา — TDEE คิดค่ากิจกรรมไว้แล้ว หักซ้ำจะเบิ้ล)

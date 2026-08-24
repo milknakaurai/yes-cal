@@ -306,6 +306,93 @@ export async function verifyConnection(env, provider, accessToken) {
   return { ok: false };
 }
 
+// ---------------------------------------------------------------- แปลงข้อมูลให้อยู่รูปเดียวกัน
+
+// ชื่อกีฬาที่ WHOOP ส่งมาเป็น slug อังกฤษ — แปลเท่าที่เจอบ่อย ที่เหลือแค่เอาขีดออก
+const SPORT_TH = {
+  weightlifting: "เวทเทรนนิ่ง", walking: "เดิน", running: "วิ่ง", cycling: "ปั่นจักรยาน",
+  swimming: "ว่ายน้ำ", yoga: "โยคะ", pilates: "พิลาทิส", "reformer-pilates": "พิลาทิส (reformer)",
+  "functional-fitness": "ฟังก์ชันนัลเทรนนิ่ง", hiit: "HIIT", boxing: "ชกมวย", golf: "กอล์ฟ",
+  tennis: "เทนนิส", badminton: "แบดมินตัน", basketball: "บาสเกตบอล", soccer: "ฟุตบอล",
+  rowing: "เรือพาย", elliptical: "เครื่องเดินวงรี", stairmaster: "เครื่องเดินขั้นบันได",
+  "jump-rope": "กระโดดเชือก", hiking: "เดินป่า", dancing: "เต้น", "martial-arts": "ศิลปะการต่อสู้",
+  activity: "กิจกรรมทั่วไป", meditation: "นั่งสมาธิ",
+};
+const sportLabel = (slug) => SPORT_TH[slug] || String(slug || "ออกกำลังกาย").replace(/-/g, " ");
+
+// วันที่แบบไทยจากเวลา UTC (ทั้งระบบใช้ UTC+7 อยู่แล้ว)
+const bkkDateOf = (iso) => new Date(new Date(iso).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+
+// WHOOP v2 — ยืนยันจาก response จริงเมื่อ 24 ส.ค. 2026
+//   { records: [{ id, start, end, timezone_offset, sport_name, score_state,
+//                 score: { strain, average_heart_rate, max_heart_rate, kilojoule, distance_meter } }] }
+// ไม่มีฟิลด์ระยะเวลา ต้องคิดจาก end - start เอง · แคลอรี่ต้องแปลงจาก kJ
+export function normalizeWhoopWorkouts(body) {
+  return (body?.records || []).map((r) => {
+    const score = r.score_state === "SCORED" ? r.score || {} : {};
+    return {
+      provider: "whoop",
+      external_id: r.id,
+      activity: sportLabel(r.sport_name),
+      date: bkkDateOf(r.start),
+      start: r.start,
+      end: r.end,
+      duration_min: Math.round((new Date(r.end) - new Date(r.start)) / 60000),
+      kcal: score.kilojoule != null ? Math.round(score.kilojoule / 4.184) : null,
+      avg_hr: score.average_heart_rate ?? null,
+      max_hr: score.max_heart_rate ?? null,
+      distance_m: score.distance_meter != null ? Math.round(score.distance_meter) : null,
+      strain: score.strain != null ? Math.round(score.strain * 10) / 10 : null,
+      scored: r.score_state === "SCORED",
+    };
+  });
+}
+
+// Google Health API v4 — ยืนยันจาก discovery document
+//   { dataPoints: [{ exercise: { displayName, exerciseType, activeDuration,
+//       interval: { startTime, endTime },
+//       metricsSummary: { caloriesKcal, averageHeartRateBeatsPerMinute, distanceMillimeters } } }] }
+// ระวัง: averageHeartRateBeatsPerMinute กับ steps ส่งมาเป็น string ต้องแปลงก่อนใช้
+export function normalizeGoogleWorkouts(body) {
+  return (body?.dataPoints || [])
+    .filter((d) => d.exercise)
+    .map((d) => {
+      const ex = d.exercise;
+      const m = ex.metricsSummary || {};
+      const start = ex.interval?.startTime;
+      const end = ex.interval?.endTime;
+      // activeDuration มาเป็น duration string เช่น "1800s" — ถ้าไม่มีก็คิดจากช่วงเวลาแทน
+      const activeSec = ex.activeDuration ? parseFloat(String(ex.activeDuration).replace("s", "")) : null;
+      return {
+        provider: "google",
+        external_id: d.name || `${start}-${ex.exerciseType || ""}`,
+        activity: ex.displayName || sportLabel(String(ex.exerciseType || "").toLowerCase()),
+        date: bkkDateOf(start),
+        start,
+        end,
+        duration_min: activeSec != null
+          ? Math.round(activeSec / 60)
+          : start && end ? Math.round((new Date(end) - new Date(start)) / 60000) : null,
+        kcal: m.caloriesKcal != null ? Math.round(m.caloriesKcal) : null,
+        avg_hr: num(m.averageHeartRateBeatsPerMinute),
+        max_hr: null,
+        distance_m: m.distanceMillimeters != null ? Math.round(m.distanceMillimeters / 1000) : null,
+        strain: null,
+        scored: true,
+      };
+    });
+}
+
+// หลายฟิลด์ของ Google เป็น string ทั้งที่เป็นตัวเลข
+function num(v) {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+export const normalizeWorkouts = (provider, body) =>
+  provider === "whoop" ? normalizeWhoopWorkouts(body) : normalizeGoogleWorkouts(body);
+
 // ---------------------------------------------------------------- ดูข้อมูลดิบ (ไว้ debug)
 
 // endpoint ที่ผู้ให้บริการใช้ดึงข้อมูลจริง — ฝั่ง Google ยืนยันจาก discovery doc แล้ว
