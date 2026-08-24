@@ -446,17 +446,29 @@ export function normalizeWhoopSleep(body) {
     efficiency_pct: sc.sleep_efficiency_percentage ?? null,
     deep_min: mins(st.total_slow_wave_sleep_time_milli),
     rem_min: mins(st.total_rem_sleep_time_milli),
+    light_min: mins(st.total_light_sleep_time_milli),
     scored: r.score_state === "SCORED",
   };
 }
 
 // Google Health — ยืนยันจาก discovery document (minutesAsleep ฯลฯ เป็น string)
+//
+// ⚠️ API **ไม่มี Sleep score และไม่มี Readiness** ที่แอป Google Health โชว์
+// ค้นทั้ง discovery document แล้ว คำว่า readiness ปรากฏ 0 ครั้ง ไม่มีฟิลด์ score ที่ไหนเลย
+// สองค่านั้นแอปคำนวณเอง ไม่ได้เปิดให้ดึง — อย่าไปกุตัวเลขขึ้นมาแทน
 export function normalizeGoogleSleep(body) {
-  const d = (body?.dataPoints || []).filter((x) => x.sleep)[0];
+  const points = (body?.dataPoints || []).filter((x) => x.sleep);
+  // mainSleep บอกเองว่าอันไหนคือการนอนหลักของคืนนั้น ไม่ต้องเดา
+  const d = points.find((x) => x.sleep.metadata?.mainSleep) || points[0];
   if (!d) return null;
   const sum = d.sleep.summary || {};
   const asleep = num(sum.minutesAsleep);
   const inBed = num(sum.minutesInSleepPeriod);
+  // stagesSummary: [{ type: "DEEP" | "REM" | "LIGHT" | "AWAKE", minutes, count }]
+  const stage = (t) => {
+    const hit = (sum.stagesSummary || []).find((x) => String(x.type).toUpperCase() === t);
+    return hit ? num(hit.minutes) : null;
+  };
   return {
     provider: "google",
     date: bkkDateOf(d.sleep.interval?.endTime || d.sleep.interval?.startTime),
@@ -465,11 +477,11 @@ export function normalizeGoogleSleep(body) {
     asleep_min: asleep,
     in_bed_min: inBed,
     awake_min: num(sum.minutesAwake),
-    // Google ไม่มีคะแนนการนอนให้ คิดประสิทธิภาพเองจากเวลาที่หลับจริงเทียบเวลาบนเตียง
     performance_pct: null,
     efficiency_pct: asleep && inBed ? Math.round((asleep / inBed) * 100) : null,
-    deep_min: null,
-    rem_min: null,
+    deep_min: stage("DEEP"),
+    rem_min: stage("REM"),
+    light_min: stage("LIGHT"),
     scored: true,
   };
 }

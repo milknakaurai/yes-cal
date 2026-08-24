@@ -95,6 +95,18 @@ DataPoint.dailyHeartRateVariability.averageHeartRateVariabilityMilliseconds
 - ยืนยันแล้วว่า **Fitbit ส่งข้อมูลเข้า Google Health API จริง** (`platform: "FITBIT"`,
   อุปกรณ์ `"Google Fitbit Air"`) — เส้นทางนี้ใช้ได้
 
+### ⛔ สิ่งที่ Google Health API ไม่มีให้ (ตรวจแล้ว 24 ส.ค. 2026)
+
+แอป Google Health โชว์ **Sleep score** (เช่น 74 · Fair) กับ **Readiness** (เช่น 69)
+แต่ **API ไม่มีสองค่านี้** — ค้นทั้ง discovery document แล้ว คำว่า `readiness` เจอ 0 ครั้ง
+และไม่มี property ชื่อ `score` อยู่ที่ไหนเลย เป็นค่าที่แอปคำนวณเองฝั่ง client
+
+**ห้ามกุตัวเลขมาเติมให้ดูเท่ากับ WHOOP** สิ่งที่ดึงได้จริงฝั่ง Fitbit คือ
+`minutesAsleep` · `minutesInSleepPeriod` (เอามาคิดประสิทธิภาพเองได้) ·
+`stagesSummary` (หลับลึก/REM/LIGHT/AWAKE เป็นนาที) · `daily-resting-heart-rate` · `daily-heart-rate-variability`
+
+`SleepMetadata.mainSleep` ใช้เลือกการนอนหลักของคืนนั้นได้ ไม่ต้องเดาจากลำดับ
+
 ### Webhook
 
 มี — `projects.subscribers.subscriptions` ใน API เดียวกัน ยังไม่ต้องใช้รอบแรก ดึงเป็นรอบ ๆ ก่อน

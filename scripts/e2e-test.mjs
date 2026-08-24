@@ -443,11 +443,20 @@ check('WHOOP: งีบกลางวันไม่ถูกเลือกม
     { id: 'm', nap: false, start: '2026-08-23T16:00:00Z', end: '2026-08-23T23:00:00Z', score_state: 'SCORED', score: {} },
   ] }).start === '2026-08-23T16:00:00Z');
 
-const gSleep = WN.normalizeGoogleSleep({ dataPoints: [{ sleep: {
-  interval: { startTime: '2026-08-23T16:30:00Z', endTime: '2026-08-23T23:15:00Z' },
-  summary: { minutesAsleep: '372', minutesInSleepPeriod: '405', minutesAwake: '33' } } }] });
-check('Fitbit: นาทีที่เป็น string แปลงแล้ว', gSleep.asleep_min === 372);
-check('Fitbit: คิดประสิทธิภาพเอง (ไม่มีคะแนนให้)', gSleep.efficiency_pct === 92);
+const gSleep = WN.normalizeGoogleSleep({ dataPoints: [
+  { sleep: { metadata: { mainSleep: false, nap: true },
+    interval: { startTime: '2026-08-24T06:00:00Z', endTime: '2026-08-24T06:40:00Z' },
+    summary: { minutesAsleep: '40', minutesInSleepPeriod: '40' } } },
+  { sleep: { metadata: { mainSleep: true },
+    interval: { startTime: '2026-08-23T16:30:00Z', endTime: '2026-08-23T23:15:00Z' },
+    summary: { minutesAsleep: '395', minutesInSleepPeriod: '410', minutesAwake: '15',
+      stagesSummary: [ { type: 'DEEP', minutes: '62', count: '4' }, { type: 'REM', minutes: '88', count: '5' },
+                       { type: 'LIGHT', minutes: '245', count: '20' }, { type: 'AWAKE', minutes: '15', count: '6' } ] } } },
+]});
+check('Fitbit: นาทีที่เป็น string แปลงแล้ว', gSleep.asleep_min === 395);
+check('Fitbit: เลือกการนอนหลักจาก mainSleep ไม่ใช่ตัวแรก', gSleep.start === '2026-08-23T16:30:00Z');
+check('Fitbit: อ่านหลับลึก/REM จาก stagesSummary ได้', gSleep.deep_min === 62 && gSleep.rem_min === 88);
+check('Fitbit: ยังไม่มีคะแนนการนอนให้ดึง (API ไม่มี)', gSleep.performance_pct === null);
 
 const gRec = WN.normalizeGoogleRecovery(
   { dataPoints: [{ dailyRestingHeartRate: { beatsPerMinute: '58' } }] },

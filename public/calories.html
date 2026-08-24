@@ -153,7 +153,7 @@ async function loadSleep(auth) {
   } catch (e) { /* ไม่มีข้อมูลการนอนก็ไม่ต้องขึ้นอะไร */ }
 }
 
-const hhmm = (min) => `${Math.floor(min / 60)}<small> ชม. </small>${String(min % 60).padStart(2, "0")}<small> น.</small>`;
+const hhmm = (min) => `${Math.floor(min / 60)}.${String(min % 60).padStart(2, "0")}<small> hrs</small>`;
 
 function renderSleep(data) {
   const slot = document.getElementById("sleepcard");
@@ -161,10 +161,11 @@ function renderSleep(data) {
   const rows = data.people.map((p) => {
     const s = p.sleep, r = p.recovery;
     const bits = [];
-    if (s?.performance_pct != null) bits.push(`คะแนน ${s.performance_pct}%`);
+    if (s?.performance_pct != null) bits.push(`Score ${s.performance_pct}%`);
     else if (s?.efficiency_pct != null) bits.push(`ประสิทธิภาพ ${s.efficiency_pct}%`);
     if (s?.deep_min) bits.push(`หลับลึก ${s.deep_min} น.`);
-    if (r?.recovery_pct != null) bits.push(`recovery ${r.recovery_pct}%`);
+    if (s?.rem_min) bits.push(`REM ${s.rem_min} น.`);
+    if (r?.recovery_pct != null) bits.push(`Recovery ${r.recovery_pct}%`);
     if (r?.resting_hr != null) bits.push(`หัวใจพัก ${r.resting_hr}`);
     if (r?.hrv_ms != null) bits.push(`HRV ${r.hrv_ms}`);
     return `<div class="sleep-row">

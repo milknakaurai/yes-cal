@@ -1093,7 +1093,40 @@ async function sleepAudience(env, chatId, userId) {
   return out;
 }
 
-const hhmm = (min) => `${Math.floor(min / 60)} ชม. ${String(min % 60).padStart(2, "0")} น.`;
+// 428 นาที → "7.08 hrs" ตามรูปแบบที่เจ้าของขอ
+const hrsDot = (min) => `${Math.floor(min / 60)}.${String(min % 60).padStart(2, "0")} hrs`;
+
+const PROVIDER_LABEL = { whoop: "WHOOP", google: "Fitbit" };
+
+// รูปแบบที่เจ้าของกำหนด — ชื่อ + ยี่ห้อ / บรรทัดการนอน / บรรทัดฟื้นตัว
+//   Milk · WHOOP
+//   Sleep 7.08 hrs / Score 88%
+//   Recovery 71%
+// ฝั่ง Fitbit ไม่มี Score กับ Readiness ให้ดึง (ดูหมายเหตุใน normalizeGoogleSleep)
+// จึงใส่เท่าที่ API มีจริง ไม่กุตัวเลขมาเติมให้ครบรูปแบบ
+function sleepBlock(name, data) {
+  const s = data.sleep, r = data.recovery;
+  const out = [`${name} · ${PROVIDER_LABEL[data.provider] || data.provider}`];
+
+  const first = [];
+  if (s?.asleep_min) first.push(`Sleep ${hrsDot(s.asleep_min)}`);
+  if (s?.performance_pct != null) first.push(`Score ${s.performance_pct}%`);
+  else if (s?.efficiency_pct != null) first.push(`ประสิทธิภาพ ${s.efficiency_pct}%`);
+  out.push(first.length ? first.join(" / ") : "ยังไม่มีข้อมูลการนอน");
+
+  const stages = [];
+  if (s?.deep_min) stages.push(`หลับลึก ${s.deep_min} น.`);
+  if (s?.rem_min) stages.push(`REM ${s.rem_min} น.`);
+  if (stages.length) out.push(stages.join(" · "));
+
+  const second = [];
+  if (r?.recovery_pct != null) second.push(`Recovery ${r.recovery_pct}%`);
+  if (r?.resting_hr != null) second.push(`หัวใจขณะพัก ${r.resting_hr}`);
+  if (r?.hrv_ms != null) second.push(`HRV ${r.hrv_ms} ms`);
+  if (second.length) out.push(second.join(" · "));
+
+  return out.join("\n");
+}
 
 async function replySleep(env, event, chatId, userId) {
   const people = await sleepAudience(env, chatId, userId);
@@ -1106,37 +1139,17 @@ async function replySleep(env, event, chatId, userId) {
     people.map(async (p) => ({ name: p.display_name, data: await W.getNightSummary(env, p.line_user_id) }))
   );
 
-  const lines = ["สรุปการนอนคืนล่าสุด 😴", ""];
+  const blocks = [];
   for (const { name, data } of results) {
     if (!data) continue;
-    if (data.error) { lines.push(`${name} — ${data.error}`, ""); continue; }
-    const s = data.sleep, r = data.recovery;
-    const head = [name];
-    if (s?.asleep_min) head.push(hhmm(s.asleep_min));
-    else head.push("ยังไม่มีข้อมูลการนอน");
-    lines.push(head.join(" — "));
-
-    const detail = [];
-    if (s?.performance_pct != null) detail.push(`คะแนนการนอน ${s.performance_pct}%`);
-    else if (s?.efficiency_pct != null) detail.push(`ประสิทธิภาพ ${s.efficiency_pct}%`);
-    if (s?.deep_min) detail.push(`หลับลึก ${s.deep_min} น.`);
-    if (s?.rem_min) detail.push(`REM ${s.rem_min} น.`);
-    if (detail.length) lines.push("   " + detail.join(" · "));
-
-    const rec = [];
-    if (r?.recovery_pct != null) rec.push(`recovery ${r.recovery_pct}%`);
-    if (r?.resting_hr != null) rec.push(`หัวใจขณะพัก ${r.resting_hr}`);
-    if (r?.hrv_ms != null) rec.push(`HRV ${r.hrv_ms} ms`);
-    if (rec.length) lines.push("   " + rec.join(" · "));
-    lines.push("");
+    blocks.push(data.error ? `${name} — ${data.error}` : sleepBlock(name, data));
   }
-
-  if (lines.length <= 2) {
+  if (!blocks.length) {
     return lineReply(env, event.replyToken,
       "ยังดึงข้อมูลการนอนไม่ได้ครับ 😴 ลองซิงก์แอปนาฬิกาก่อนแล้วพิมพ์ใหม่อีกครั้ง");
   }
-  lines.push("ตัวเลขมาจากนาฬิกาของแต่ละคนโดยตรง");
-  return lineReply(env, event.replyToken, lines.join("\n").trim());
+  return lineReply(env, event.replyToken,
+    ["สรุปการนอนคืนล่าสุด 😴", "", blocks.join("\n\n\n")].join("\n"));
 }
 
 // คำสั่งกลุ่มนี้ใช้ได้ทั้งสองโหมด (ทั้งกลุ่มแคลอรี่และกลุ่มชาเลนจ์)
