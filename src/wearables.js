@@ -333,6 +333,7 @@ export function normalizeWhoopWorkouts(body) {
     return {
       provider: "whoop",
       external_id: r.id,
+      sport: r.sport_name || null,
       activity: sportLabel(r.sport_name),
       date: bkkDateOf(r.start),
       start: r.start,
@@ -366,6 +367,7 @@ export function normalizeGoogleWorkouts(body) {
       return {
         provider: "google",
         external_id: d.name || `${start}-${ex.exerciseType || ""}`,
+        sport: String(ex.exerciseType || "").toLowerCase() || null,
         activity: ex.displayName || sportLabel(String(ex.exerciseType || "").toLowerCase()),
         date: bkkDateOf(start),
         start,
@@ -388,6 +390,38 @@ function num(v) {
   if (v == null || v === "") return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// ---------------------------------------------------------------- เกณฑ์เช็คอินอัตโนมัติ
+//
+// เจ้าของเลือกไว้: นับทุกอย่างที่นาฬิกาจับได้ แต่ "เดิน" ต้องหนักพอถึงนับ
+// เพราะกีฬาอย่างเวท/พิลาทิสคือตั้งใจไปทำ ส่วนเดินนาฬิกาจับเองแม้ตอนเดินไปเข้าห้องน้ำ
+// (ข้อมูลจริง 22 ส.ค. มีรายการ "เดิน 40 นาที strain 1.4 หัวใจเฉลี่ย 86" ซึ่งแทบไม่ต่างจากตอนพัก)
+//
+// ตัดสินด้วย strain เท่านั้น **ห้ามใช้ระยะทางมาเป็นเกณฑ์** — WHOOP ไม่มี GPS ในตัว
+// ระยะทางมาจากมือถือ ไม่ได้พกไปก็เป็น null หรือน้อยผิดปกติ ทั้งที่เดินจริง
+// ส่วน strain คิดจากหัวใจที่ข้อมือ วัดได้เสมอไม่ว่าจะพกมือถือหรือไม่
+//
+// อยากเข้ม/ผ่อนกว่านี้ แก้สองค่านี้ที่เดียวจบ
+export const WALK_MIN_STRAIN = 4.0;   // ใช้กับ WHOOP ที่มี strain ให้
+export const WALK_MIN_MINUTES = 20;   // ใช้กับ Google ที่ไม่มี strain
+
+const WALK_SPORTS = new Set(["walking", "walk"]);
+
+// คืน { ok, why } — why ไว้บอกในแชทได้ว่าทำไมรายการนั้นไม่ถูกนับ
+export function countsAsCheckin(w) {
+  if (!w.scored) return { ok: false, why: "นาฬิกายังคำนวณคะแนนไม่เสร็จ" };
+  if (!w.duration_min) return { ok: false, why: "ไม่มีระยะเวลา" };
+  if (!WALK_SPORTS.has(w.sport)) return { ok: true };
+
+  if (w.strain != null) {
+    return w.strain >= WALK_MIN_STRAIN
+      ? { ok: true }
+      : { ok: false, why: `เดินเบาเกินไป (strain ${w.strain}) ไม่นับเป็นการออกกำลังกาย` };
+  }
+  return (w.duration_min || 0) >= WALK_MIN_MINUTES
+    ? { ok: true }
+    : { ok: false, why: `เดินสั้นเกินไป (${w.duration_min} นาที)` };
 }
 
 export const normalizeWorkouts = (provider, body) =>

@@ -487,6 +487,24 @@ check('Google: หัวใจที่เป็น string แปลงเป็
 check('Google: มิลลิเมตร → เมตร', gw.distance_m === 5200);
 check('Google: ปัดแคลอรี่', gw.kcal === 313);
 
+// เกณฑ์เช็คอินอัตโนมัติ
+const verdicts = wo.map((w) => ({ w, v: WN.countsAsCheckin(w) }));
+for (const { w, v } of verdicts) {
+  console.log(`  ${v.ok ? '✅ นับ  ' : '❌ ไม่นับ'} ${w.date} ${String(w.activity).padEnd(20)} strain ${String(w.strain).padStart(5)}${v.ok ? '' : '  ← ' + v.why}`);
+}
+check('เวท/พิลาทิส นับหมด', verdicts.filter(x => x.w.sport !== 'walking').every(x => x.v.ok));
+check('เดิน strain 1.4 ไม่นับ', verdicts.find(x => x.w.strain === 1.4).v.ok === false);
+check('เดิน strain 4.6 นับ', verdicts.find(x => x.w.strain === 4.6).v.ok === true);
+check('ยังไม่ได้คะแนน ไม่นับ', WN.countsAsCheckin({ ...lift, scored: false }).ok === false);
+// WHOOP ไม่มี GPS — ไม่พกมือถือแล้วระยะทางหาย ต้องไม่ทำให้การออกกำลังกายจริงถูกตัดทิ้ง
+check('ระยะทางเป็น null ไม่กระทบการนับ',
+  WN.countsAsCheckin({ ...lift, distance_m: null }).ok === true);
+check('เดินหนักแต่ไม่มีระยะทาง ก็ยังนับ',
+  WN.countsAsCheckin({ sport: 'walking', scored: true, duration_min: 30, strain: 7, distance_m: null }).ok === true);
+check('ฝั่ง Google ที่ไม่มี strain ใช้เวลาแทน',
+  WN.countsAsCheckin({ sport: 'walking', scored: true, duration_min: 25, strain: null }).ok === true &&
+  WN.countsAsCheckin({ sport: 'walking', scored: true, duration_min: 5, strain: null }).ok === false);
+
 console.log('\n--- หน้าเว็บสาธารณะ ---');
 for (const [path, file] of [['/workout', 'workout.html'], ['/calories', 'calories.html'], ['/connect', 'connect.html'],
                             ['/privacy', 'privacy.html'], ['/terms', 'terms.html']]) {
