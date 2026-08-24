@@ -86,6 +86,44 @@ CREATE TABLE IF NOT EXISTS chat_view_tokens (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- ============ เชื่อมบัญชีนาฬิกา (WHOOP / Fitbit ผ่าน Google Health) ============
+-- worker สร้างสามตารางนี้ให้เองตอนใช้งานครั้งแรก (ensureWearableTables) ไม่ต้องรัน migration
+-- โทเคนถูกเข้ารหัส AES-GCM ด้วย secret TOKEN_KEY ก่อนเขียนลงมา ไม่ได้เก็บเป็น plain text
+
+-- ลิงก์ผูกบัญชีที่บอทออกให้ในแชท อายุ 15 นาที ใช้ได้ครั้งเดียว
+CREATE TABLE IF NOT EXISTS oauth_links (
+  token TEXT PRIMARY KEY,
+  line_user_id TEXT NOT NULL,
+  chat_id TEXT,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- state กัน CSRF ระหว่างเด้งไปหน้ายินยอมของผู้ให้บริการ (WHOOP บังคับยาว >= 8 ตัวอักษร)
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  line_user_id TEXT NOT NULL,
+  chat_id TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS device_links (
+  line_user_id TEXT NOT NULL,
+  provider TEXT NOT NULL,          -- 'whoop' | 'google'
+  access_token TEXT NOT NULL,      -- เข้ารหัสแล้ว
+  refresh_token TEXT,              -- เข้ารหัสแล้ว
+  expires_at TEXT,
+  scope TEXT,
+  provider_user_id TEXT,
+  display_name TEXT,
+  connected_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT,
+  PRIMARY KEY (line_user_id, provider)
+);
+
 -- นับการเรียก API รายวัน ไว้ดูว่าใช้โควตาฟรีไปเท่าไหร่ (ดูผลที่ /api/health)
 CREATE TABLE IF NOT EXISTS api_usage (
   day TEXT NOT NULL,            -- YYYY-MM-DD (เวลาไทย)

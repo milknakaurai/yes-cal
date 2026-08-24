@@ -33,6 +33,9 @@ const env = {
   LINE_CHANNEL_ACCESS_TOKEN: 'token',
   GEMINI_API_KEY: 'key',
   DASHBOARD_KEY: 'dash',
+  TOKEN_KEY: 'a-very-secret-key-for-tests-0123456789',
+  WHOOP_CLIENT_ID: 'whoop-id', WHOOP_CLIENT_SECRET: 'whoop-secret',
+  GOOGLE_CLIENT_ID: 'google-id', GOOGLE_CLIENT_SECRET: 'google-secret',
   ASSETS: { fetch: async (u) => new Response('<!DOCTYPE html>' + String(u), { status: 200 }) },
 };
 
@@ -41,6 +44,9 @@ const replies = [];
 let geminiReply = null;
 let suggestReply = null;
 let lastGeminiPrompt = '';
+let lastTokenRequest = null;
+let tokenSeq = 0;
+let tokenFails = false;
 let geminiDown = false;
 globalThis.fetch = async (url, opts) => {
   const u = String(url);
@@ -50,6 +56,15 @@ globalThis.fetch = async (url, opts) => {
     const wantsSuggestion = lastGeminiPrompt.includes('ผู้ช่วยด้านโภชนาการ');
     const payload = wantsSuggestion && suggestReply ? suggestReply : geminiReply;
     return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }) };
+  }
+  if (u.includes('whoop.com/oauth/oauth2/token') || u === 'https://oauth2.googleapis.com/token') {
+    lastTokenRequest = { url: u, body: String(opts?.body || '') };
+    if (tokenFails) return { ok: false, status: 400, text: async () => '{"error":"invalid_grant"}' };
+    return { ok: true, status: 200, text: async () => JSON.stringify({
+      access_token: 'AT-' + (++tokenSeq), refresh_token: 'RT-' + tokenSeq, expires_in: 3600, scope: 'read:workout' }) };
+  }
+  if (u.includes('/user/profile/basic') || u.endsWith('/v4/users/me/identity')) {
+    return { ok: true, status: 200, json: async () => ({ user_id: 42, first_name: 'Milk', last_name: 'N' }) };
   }
   if (u.includes('/content')) {
     return { ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: async () => new ArrayBuffer(16) };
@@ -334,8 +349,84 @@ check('ลิงก์เก่าใช้ไม่ได้แล้ว', oldL
 const newLink = await worker.fetch(new Request(`https://x/api/challenge?t=${rotated}`), env, ctx);
 check('ลิงก์ใหม่ใช้ได้', newLink.status === 200);
 
+// ---- เชื่อมนาฬิกา ----
+console.log('\n--- เชื่อมนาฬิกา ---');
+CURRENT_NAME = 'Milk';
+const linkOut = await send(dmEvent('U_DM', 'เชื่อมนาฬิกา'));
+show('Milk พิมพ์ "เชื่อมนาฬิกา"', linkOut);
+const linkToken = linkOut[0]?.match(/connect\?t=([a-f0-9]+)/)?.[1];
+check('บอทส่งลิงก์ผูกบัญชีมา', !!linkToken);
+
+const startRes = await worker.fetch(new Request(`https://x/oauth/whoop/start?t=${linkToken}`), env, ctx);
+const authUrl = new URL(startRes.headers.get('location') || 'https://x/');
+check('เด้งไปหน้ายินยอมของ WHOOP', startRes.status === 302 && authUrl.host === 'api.prod.whoop.com');
+const st = authUrl.searchParams.get('state') || '';
+check('scope มี offline (ไม่งั้นไม่ได้ refresh_token)', (authUrl.searchParams.get('scope') || '').includes('offline'));
+check('state ยาวเกิน 8 ตัว (WHOOP บังคับ)', st.length >= 8);
+check('redirect_uri ตรงกับที่ลงทะเบียนไว้',
+  authUrl.searchParams.get('redirect_uri') === 'https://x/oauth/whoop/callback');
+
+const cbRes = await worker.fetch(new Request(`https://x/oauth/whoop/callback?code=CODE1&state=${st}`), env, ctx);
+check('callback สำเร็จ', cbRes.status === 200 && (await cbRes.text()).includes('สำเร็จ'));
+check('แลกโทเคนด้วย grant_type ถูกต้อง', (lastTokenRequest?.body || '').includes('grant_type=authorization_code'));
+check('ส่ง client_secret ไปด้วย', (lastTokenRequest?.body || '').includes('client_secret=whoop-secret'));
+
+const stored = db.prepare(`SELECT access_token, refresh_token, provider_user_id, display_name FROM device_links WHERE line_user_id='U_DM'`).get();
+check('เก็บลง device_links แล้ว', !!stored);
+check('โทเคนถูกเข้ารหัส ไม่ใช่ plain text',
+  !!stored && !stored.access_token.includes('AT-') && stored.access_token.includes('.'));
+check('ยืนยันบัญชีปลายทางได้', stored?.display_name === 'Milk N');
+show('Milk พิมพ์ "นาฬิกา"', await send(dmEvent('U_DM', 'นาฬิกา')));
+
+// state ใช้ซ้ำไม่ได้ · ลิงก์หมดอายุแล้วต้องขอใหม่
+const replay = await worker.fetch(new Request(`https://x/oauth/whoop/callback?code=CODE1&state=${st}`), env, ctx);
+check('ใช้ state ซ้ำไม่ได้', replay.status === 400);
+const badLink = await worker.fetch(new Request('https://x/oauth/whoop/start?t=ไม่มีจริง'), env, ctx);
+check('ลิงก์มั่วเริ่ม flow ไม่ได้', badLink.status === 400);
+const denied = await worker.fetch(new Request('https://x/oauth/google/callback?error=access_denied'), env, ctx);
+check('ผู้ใช้กดปฏิเสธ → ขึ้นหน้าบอกเหตุผล', denied.status === 400 && (await denied.text()).includes('ปฏิเสธ'));
+
+// เชื่อม Google ต่ออีกเจ้า
+const link2 = (await send(dmEvent('U_DM', 'เชื่อมนาฬิกา')))[0].match(/connect\?t=([a-f0-9]+)/)[1];
+const g = new URL((await worker.fetch(new Request(`https://x/oauth/google/start?t=${link2}`), env, ctx)).headers.get('location'));
+check('Google ขอ access_type=offline', g.searchParams.get('access_type') === 'offline');
+check('Google ขอ scope ของ Health API', (g.searchParams.get('scope') || '').includes('googlehealth.sleep.readonly'));
+await worker.fetch(new Request(`https://x/oauth/google/callback?code=C2&state=${g.searchParams.get('state')}`), env, ctx);
+check('เชื่อมได้ 2 เจ้าพร้อมกัน',
+  db.prepare(`SELECT COUNT(*) AS n FROM device_links WHERE line_user_id='U_DM'`).get().n === 2);
+
+// ต่ออายุโทเคนอัตโนมัติ — จุดที่ scope offline มีไว้เพื่อสิ่งนี้
+const WR = await import(new URL('../src/wearables.js', import.meta.url));
+const before = db.prepare(`SELECT access_token FROM device_links WHERE line_user_id='U_DM' AND provider='whoop'`).get();
+db.prepare(`UPDATE device_links SET expires_at = '2020-01-01T00:00:00.000Z' WHERE line_user_id='U_DM' AND provider='whoop'`).run();
+lastTokenRequest = null;
+const fresh = await WR.getAccessToken(env, 'U_DM', 'whoop');
+check('โทเคนหมดอายุ → ต่ออายุให้เอง', typeof fresh === 'string' && fresh.startsWith('AT-'));
+check('ใช้ grant_type=refresh_token', (lastTokenRequest?.body || '').includes('grant_type=refresh_token'));
+check('WHOOP ต้องส่ง scope=offline ตอน refresh ด้วย', (lastTokenRequest?.body || '').includes('scope=offline'));
+const after = db.prepare(`SELECT access_token FROM device_links WHERE line_user_id='U_DM' AND provider='whoop'`).get();
+check('บันทึกโทเคนใหม่ทับของเดิม', after.access_token !== before.access_token);
+
+// ผู้ใช้ถอนสิทธิ์ที่ต้นทาง → refresh พัง ต้องไม่ระเบิด
+db.prepare(`UPDATE device_links SET expires_at = '2020-01-01T00:00:00.000Z' WHERE line_user_id='U_DM' AND provider='whoop'`).run();
+tokenFails = true;
+check('refresh ไม่ผ่าน → คืน null ไม่ throw', (await WR.getAccessToken(env, 'U_DM', 'whoop')) === null);
+tokenFails = false;
+
+// โทเคนที่เก็บไว้ต้องถอดรหัสกลับมาได้ตรง
+const round = await WR.decryptSecret(env, await WR.encryptSecret(env, 'ทดสอบ-secret-123'));
+check('เข้ารหัส/ถอดรหัสได้ตรงกัน', round === 'ทดสอบ-secret-123');
+
+show('Milk พิมพ์ "ตัดการเชื่อมต่อ"', await send(dmEvent('U_DM', 'ตัดการเชื่อมต่อ')));
+check('ตัดการเชื่อมต่อแล้วโทเคนหายหมด',
+  db.prepare(`SELECT COUNT(*) AS n FROM device_links WHERE line_user_id='U_DM'`).get().n === 0);
+
+const health = await api('/api/health?key=dash');
+console.log('  wearables ใน /api/health:', JSON.stringify(health.wearables));
+check('/api/health บอกว่าตั้งค่าครบแล้ว', health.wearables.whoop.ready && health.wearables.google.ready);
+
 console.log('\n--- หน้าเว็บสาธารณะ ---');
-for (const [path, file] of [['/workout', 'workout.html'], ['/calories', 'calories.html'],
+for (const [path, file] of [['/workout', 'workout.html'], ['/calories', 'calories.html'], ['/connect', 'connect.html'],
                             ['/privacy', 'privacy.html'], ['/terms', 'terms.html']]) {
   const r = await worker.fetch(new Request('https://x' + path), env, ctx);
   const body = r.status === 200 ? await r.text() : '';

@@ -2,6 +2,7 @@
 // Cloudflare Worker: LINE webhook + Gemini calorie estimation + D1 + dashboard API + nightly cron
 
 import { NUTRITION_HINTS, SUGGEST_POOL } from "./food-reference.js";
+import * as W from "./wearables.js";
 import * as J from "./jokes.js";
 
 const LINE_API = "https://api.line.me/v2/bot";
@@ -32,6 +33,7 @@ const ACTIVITY_LEVELS = [
 let PUBLIC_ORIGIN = "";
 
 const PRETTY_PATHS = {
+  "/connect": "/connect.html",
   "/workout": "/workout.html",
   "/calories": "/calories.html",
   "/privacy": "/privacy.html",
@@ -49,6 +51,12 @@ export default {
     if (url.pathname.startsWith("/api/")) {
       return handleApi(url, request, env);
     }
+    // ---- เชื่อมบัญชีนาฬิกา ----
+    const oauth = url.pathname.match(/^\/oauth\/(whoop|google)\/(start|callback)$/);
+    if (oauth) {
+      return handleOAuth(url, env, oauth[1], oauth[2]);
+    }
+
     // path สวย ๆ → ไฟล์จริงใน public/ (ปกติ static assets จับให้อยู่แล้ว อันนี้กันเหนียว)
     // /privacy กับ /terms ต้องเปิดได้แบบสาธารณะ เพราะ Whoop/Google เอาไปโชว์ในหน้าขอสิทธิ์
     const page = PRETTY_PATHS[url.pathname.replace(/\/$/, "") || "/"];
@@ -121,6 +129,10 @@ async function handleEvent(event, env) {
   const chatId = event.source.groupId || event.source.roomId || userId;
   const text = event.message.type === "text" ? event.message.text.trim() : "";
   const mode = await getChatMode(env, chatId);
+
+  // คำสั่งเชื่อมนาฬิกาใช้ได้ทั้งสองโหมด เช็คก่อนแยกทาง
+  const wearable = await handleWearableCommand(env, event, userId, chatId, text);
+  if (wearable.handled) return wearable.promise;
 
   // สลับกลุ่มนี้เข้าโหมดชาเลนจ์ — เฉพาะในกลุ่ม และเฉพาะตอนที่ยังไม่ได้อยู่โหมดนี้
   // (กันคนพิมพ์คำว่า "ออกกำลังกาย" ลอย ๆ ในกลุ่มชาเลนจ์แล้วเจอข้อความต้อนรับซ้ำ
@@ -926,6 +938,145 @@ async function getDayTotals(env, userId, date) {
   return row;
 }
 
+// ---------------------------------------------------------------- OAuth เชื่อมนาฬิกา
+
+async function handleOAuth(url, env, provider, step) {
+  if (!W.providerReady(env, provider)) {
+    return oauthPage("ยังตั้งค่าไม่ครบ",
+      `ผู้ดูแลยังไม่ได้ตั้ง client id/secret ของ ${W.PROVIDERS[provider].label} หรือ TOKEN_KEY บน Worker`, false);
+  }
+
+  if (step === "start") {
+    // ต้องมาจากลิงก์ที่บอทออกให้เท่านั้น จะได้รู้ว่ากำลังเชื่อมให้ใครใน LINE
+    const link = await W.readLinkToken(env, url.searchParams.get("t"));
+    if (!link) {
+      return oauthPage("ลิงก์หมดอายุ",
+        'ลิงก์ผูกบัญชีใช้ได้ 15 นาที พิมพ์ "เชื่อมนาฬิกา" ในแชทอีกครั้งเพื่อขอลิงก์ใหม่', false);
+    }
+    const state = await W.createState(env, provider, link.line_user_id, link.chat_id);
+    return Response.redirect(W.buildAuthUrl(env, provider, url.origin, state), 302);
+  }
+
+  // ---- callback ----
+  const err = url.searchParams.get("error");
+  if (err) {
+    return oauthPage("ยังไม่ได้เชื่อม",
+      err === "access_denied" ? "คุณกดปฏิเสธการให้สิทธิ์ ไม่มีอะไรถูกบันทึกไว้" : `ผู้ให้บริการแจ้งว่า: ${err}`, false);
+  }
+
+  const claim = await W.consumeState(env, url.searchParams.get("state"));
+  if (!claim || claim.provider !== provider) {
+    return oauthPage("ลิงก์ไม่ถูกต้อง",
+      'ตรวจสอบความปลอดภัยไม่ผ่าน (state หมดอายุหรือถูกใช้ไปแล้ว) พิมพ์ "เชื่อมนาฬิกา" ใหม่อีกครั้ง', false);
+  }
+
+  const code = url.searchParams.get("code");
+  if (!code) return oauthPage("ข้อมูลไม่ครบ", "ไม่ได้รับ authorization code กลับมา", false);
+
+  try {
+    const tokens = await W.exchangeCode(env, provider, url.origin, code);
+    const check = await W.verifyConnection(env, provider, tokens.access_token);
+    await W.saveTokens(env, claim.line_user_id, provider, tokens, {
+      providerUserId: check.providerUserId,
+      displayName: check.displayName,
+    });
+    await W.consumeLinkToken(env, url.searchParams.get("t") || "");
+
+    const label = W.PROVIDERS[provider].label;
+    const warn = tokens.refresh_token
+      ? ""
+      : " (ไม่ได้รับ refresh token — อาจต้องเชื่อมใหม่เมื่อหมดอายุ)";
+    return oauthPage(`เชื่อม ${label} สำเร็จ`,
+      `กลับไปที่แชท LINE ได้เลยครับ พิมพ์ "นาฬิกา" เพื่อดูสถานะการเชื่อมต่อ${warn}`, true);
+  } catch (e) {
+    console.error("oauth callback", provider, e.message);
+    return oauthPage("เชื่อมไม่สำเร็จ", `แลกโทเคนไม่ผ่าน: ${e.message}`, false);
+  }
+}
+
+function oauthPage(title, detail, ok) {
+  const body = `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yes Cal — ${esc(title)}</title><link rel="stylesheet" href="/site.css"></head>
+<body><div class="topbar"><a class="brand" href="/">Yes Cal 💪</a></div>
+<h1>${ok ? "✅" : "⚠️"} ${esc(title)}</h1>
+<p>${esc(detail)}</p>
+<p class="meta"><a href="/">กลับหน้าแรก</a></p>
+</body></html>`;
+  return new Response(body, {
+    status: ok ? 200 : 400,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+const trimmedLength = (env, name) => (env[name] || "").trim().length;
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// ---- คำสั่งในแชท ----
+
+async function replyConnectLink(env, event, userId, chatId) {
+  const ready = ["whoop", "google"].filter((p) => W.providerReady(env, p));
+  if (!ready.length) {
+    return lineReply(env, event.replyToken,
+      "ยังเปิดใช้ไม่ได้ครับ ผู้ดูแลยังไม่ได้ตั้งค่าการเชื่อมนาฬิกาบนเซิร์ฟเวอร์");
+  }
+  const token = await W.createLinkToken(env, userId, chatId);
+  return lineReply(env, event.replyToken, [
+    "เชื่อมนาฬิกาเข้ากับ Yes Cal 🩶",
+    `${PUBLIC_ORIGIN}/connect?t=${token}`,
+    "",
+    `เปิดลิงก์แล้วเลือกยี่ห้อได้เลย (${ready.map((p) => W.PROVIDERS[p].label).join(" หรือ ")})`,
+    "ลิงก์นี้ใช้ได้ 15 นาที และผูกกับชื่อคุณคนเดียว อย่าส่งต่อให้ใคร",
+  ].join("\n"));
+}
+
+async function replyDeviceStatus(env, event, userId) {
+  const links = await W.listConnections(env, userId);
+  if (!links.length) {
+    return lineReply(env, event.replyToken,
+      'ยังไม่ได้เชื่อมนาฬิกาไว้ครับ\nพิมพ์ "เชื่อมนาฬิกา" เพื่อเริ่ม');
+  }
+  const lines = ["นาฬิกาที่เชื่อมไว้ 🩶", ""];
+  for (const l of links) {
+    lines.push(`✅ ${W.PROVIDERS[l.provider]?.label || l.provider}`);
+    if (l.display_name) lines.push(`   บัญชี ${l.display_name}`);
+  }
+  lines.push("", 'อยากเลิกเชื่อมพิมพ์ "ตัดการเชื่อมต่อ"');
+  return lineReply(env, event.replyToken, lines.join("\n"));
+}
+
+async function replyDisconnect(env, event, userId) {
+  const links = await W.listConnections(env, userId);
+  if (!links.length) {
+    return lineReply(env, event.replyToken, "ไม่มีนาฬิกาที่เชื่อมไว้อยู่แล้วครับ");
+  }
+  for (const l of links) await W.disconnect(env, userId, l.provider);
+  return lineReply(env, event.replyToken, [
+    "ตัดการเชื่อมต่อแล้วครับ ลบโทเคนออกจากระบบเรียบร้อย",
+    "",
+    "แนะนำให้ถอนสิทธิ์ที่ต้นทางด้วย เพื่อความสบายใจ:",
+    "WHOOP — ในแอป หัวข้อการเชื่อมต่อกับแอปอื่น",
+    "Google — myaccount.google.com/permissions",
+  ].join("\n"));
+}
+
+// คำสั่งกลุ่มนี้ใช้ได้ทั้งสองโหมด (ทั้งกลุ่มแคลอรี่และกลุ่มชาเลนจ์)
+async function handleWearableCommand(env, event, userId, chatId, text) {
+  if (/^(เชื่อมนาฬิกา|เชื่อมต่อนาฬิกา|ผูกนาฬิกา|connect)$/i.test(text)) {
+    return { handled: true, promise: replyConnectLink(env, event, userId, chatId) };
+  }
+  if (/^(นาฬิกา|สถานะนาฬิกา)$/.test(text)) {
+    return { handled: true, promise: replyDeviceStatus(env, event, userId) };
+  }
+  if (/^(ตัดการเชื่อมต่อ|ยกเลิกนาฬิกา|เลิกเชื่อมนาฬิกา|disconnect)$/i.test(text)) {
+    return { handled: true, promise: replyDisconnect(env, event, userId) };
+  }
+  return { handled: false };
+}
+
 // ---------------------------------------------------------------- dashboard API
 
 async function handleApi(url, request, env) {
@@ -969,6 +1120,19 @@ async function handleApi(url, request, env) {
     } catch (e) {
       report.line_status = "fetch_error: " + e.message;
     }
+    report.wearables = {};
+    for (const name of ["whoop", "google"]) {
+      report.wearables[name] = { ready: W.providerReady(env, name) };
+    }
+    report.wearables.TOKEN_KEY_set = trimmedLength(env, "TOKEN_KEY") > 0;
+    try {
+      report.wearables.connected = (await env.DB.prepare(
+        `SELECT provider, COUNT(*) AS n FROM device_links GROUP BY provider`
+      ).all()).results;
+    } catch {
+      report.wearables.connected = "ยังไม่มีตาราง device_links (ยังไม่มีใครเชื่อม)";
+    }
+
     try {
       report.usage_7d = (await env.DB.prepare(
         `SELECT day, kind, label, n FROM api_usage WHERE day >= ? ORDER BY day DESC, kind`

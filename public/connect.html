@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yes Cal — เชื่อมนาฬิกา</title>
+<link rel="stylesheet" href="/site.css">
+<style>
+  .choices { display: grid; gap: 12px; margin: 22px 0; }
+  .choice {
+    display: flex; align-items: center; gap: 14px;
+    padding: 18px; border-radius: 12px; text-decoration: none;
+    background: var(--surface-1); border: 1px solid var(--border); color: var(--text-primary);
+  }
+  .choice:hover { border-color: var(--accent); }
+  .choice .mark { font-size: 26px; flex: none; }
+  .choice b { display: block; font-size: 16px; }
+  .choice span { font-size: 13px; color: var(--text-secondary); }
+  #bad { display: none; }
+</style>
+</head>
+<body>
+
+<div class="topbar"><a class="brand" href="/">Yes Cal 💪</a></div>
+
+<div id="ok">
+  <h1>เชื่อมนาฬิกาของคุณ</h1>
+  <p>เลือกยี่ห้อที่ใช้อยู่ ระบบจะพาไปหน้าขอสิทธิ์ของผู้ให้บริการโดยตรง — Yes Cal ไม่เห็นรหัสผ่านของคุณ</p>
+
+  <div class="choices">
+    <a class="choice" id="whoop" href="#">
+      <span class="mark">⌚</span>
+      <span><b>WHOOP</b><span>อ่านการออกกำลังกาย การนอน และ recovery</span></span>
+    </a>
+    <a class="choice" id="google" href="#">
+      <span class="mark">⌚</span>
+      <span><b>Fitbit</b><span>ผ่าน Google Health — อ่านการออกกำลังกาย การนอน และหัวใจขณะพัก</span></span>
+    </a>
+  </div>
+
+  <div class="notice">
+    <p><strong>ขอสิทธิ์แบบอ่านอย่างเดียว</strong></p>
+    <p>Yes Cal ไม่แก้ไขข้อมูลในบัญชีนาฬิกาของคุณ และไม่ขอข้อมูลตำแหน่ง GPS
+      ข้อมูลที่ดึงมาจะแสดงในกลุ่ม LINE ที่คุณอยู่ ยกเลิกเมื่อไหร่ก็ได้โดยพิมพ์
+      <code>ตัดการเชื่อมต่อ</code> ในแชท</p>
+  </div>
+
+  <p class="meta">อ่านรายละเอียดได้ที่ <a href="/privacy">นโยบายความเป็นส่วนตัว</a></p>
+</div>
+
+<div id="bad">
+  <h1>⚠️ ลิงก์ใช้ไม่ได้</h1>
+  <p>ลิงก์ผูกบัญชีมีอายุ 15 นาที และใช้ได้ครั้งเดียว</p>
+  <p>กลับไปที่แชท LINE แล้วพิมพ์ <code>เชื่อมนาฬิกา</code> อีกครั้งเพื่อขอลิงก์ใหม่</p>
+</div>
+
+<footer>
+  <span>Yes Cal</span>
+  <a href="/">หน้าแรก</a>
+  <a href="/privacy">Privacy</a>
+  <a href="/terms">Terms</a>
+</footer>
+
+<script>
+  // โทเคนผูกบัญชีอยู่ใน URL — ส่งต่อไปให้ /oauth/{ยี่ห้อ}/start ตอนกดเลือก
+  var t = new URLSearchParams(location.search).get("t");
+  if (!t) {
+    document.getElementById("ok").style.display = "none";
+    document.getElementById("bad").style.display = "block";
+  } else {
+    ["whoop", "google"].forEach(function (p) {
+      document.getElementById(p).href = "/oauth/" + p + "/start?t=" + encodeURIComponent(t);
+    });
+  }
+</script>
+</body>
+</html>
