@@ -57,6 +57,19 @@
   .group-head { display: flex; align-items: baseline; gap: 8px; margin: 26px 0 12px; flex-wrap: wrap; }
   .group-name { font-size: 17px; font-weight: 700; }
   .group-meta { font-size: 12.5px; color: var(--text-muted); }
+  .linkrow {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    margin-top: 2px; font-size: 12px;
+  }
+  .linkrow code {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .linkrow button {
+    flex: none; padding: 4px 12px; font-size: 12px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--series-1);
+  }
+  .linkrow button.done { color: var(--done); }
   .card {
     background: var(--surface-1);
     border: 1px solid var(--border);
@@ -128,27 +141,41 @@ const TH_MONTHS = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.",
 const thaiDate = (d) => { const [, m, day] = d.split("-").map(Number); return `${day} ${TH_MONTHS[m - 1]}`; };
 const thaiDow = (d) => ["อา","จ","อ","พ","พฤ","ศ","ส"][new Date(d + "T00:00:00Z").getUTCDay()];
 
-// เปิดด้วยลิงก์ ?key=... ได้เลย ไม่ต้องพิมพ์ (เก็บลง localStorage แล้วลบออกจาก URL กันหลุด)
-function keyFromUrl() {
-  const k = new URLSearchParams(location.search).get("key");
-  if (!k) return;
-  localStorage.setItem("yescal_key", k);
-  history.replaceState(null, "", location.pathname);
+// เปิดด้วยลิงก์ได้เลยไม่ต้องพิมพ์ (เก็บลง localStorage แล้วลบพารามิเตอร์ออกจาก URL กันหลุด)
+//   ?t=<token>  ลิงก์เฉพาะกลุ่ม — เห็นแค่กลุ่มตัวเอง
+//   ?key=<รหัส>  รหัสรวมของเจ้าของ — เห็นทุกกลุ่ม
+function readUrlAuth() {
+  const q = new URLSearchParams(location.search);
+  const t = q.get("t");
+  const k = q.get("key");
+  if (t) localStorage.setItem("yescal_token", t);
+  if (k) localStorage.setItem("yescal_key", k);
+  if (t || k) history.replaceState(null, "", location.pathname);
 }
 
 async function load() {
+  const token = localStorage.getItem("yescal_token") || "";
   const key = localStorage.getItem("yescal_key") || "";
-  const res = await fetch(`/api/challenge?days=${DAYS}` + (key ? "&key=" + encodeURIComponent(key) : ""));
-  if (res.status === 401) return renderKeyPrompt();
+  // โทเคนกลุ่มมาก่อนเสมอ — คนในกลุ่มเปิดลิงก์ตัวเองต้องได้ของกลุ่มตัวเองแม้เครื่องจะเคยเก็บรหัสรวมไว้
+  const auth = token ? "&t=" + encodeURIComponent(token)
+             : key ? "&key=" + encodeURIComponent(key) : "";
+  const res = await fetch(`/api/challenge?days=${DAYS}${auth}`);
+  if (res.status === 401) {
+    // ลิงก์กลุ่มใช้ไม่ได้แล้ว (เปลี่ยนโหมด/โทเคนถูกเปลี่ยน) — ทิ้งแล้วถามรหัสแทน
+    if (token) localStorage.removeItem("yescal_token");
+    return renderKeyPrompt(!!token);
+  }
   render(await res.json());
 }
 
-function renderKeyPrompt() {
+function renderKeyPrompt(linkExpired = false) {
   // ต้องเป็น <form> จริง ๆ มือถือถึงจะขึ้นปุ่ม Go บนคีย์บอร์ด และตัวจำรหัสผ่านถึงจะทำงาน
   $app.innerHTML = `
     <div id="keybox">
       <h1>Yes Cal 🔒</h1>
-      <p class="date" style="margin-top:8px">ใส่รหัสผ่านหน้าเว็บ (DASHBOARD_KEY)</p>
+      <p class="date" style="margin-top:8px">${linkExpired
+        ? "ลิงก์ของกลุ่มใช้ไม่ได้แล้ว — พิมพ์ \"เว็บ\" ในกลุ่มเพื่อขอลิงก์ใหม่"
+        : "ใส่รหัสผ่านหน้าเว็บ (DASHBOARD_KEY)"}</p>
       <form id="keyform">
         <input type="password" id="keyinput" name="password" autocomplete="current-password"
                autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go">
@@ -178,10 +205,31 @@ function render(data) {
     </div></div>`;
     return;
   }
+  const note = data.scope === "group"
+    ? "หน้านี้เป็นของกลุ่มนี้กลุ่มเดียว · บอทเตือนคนที่ยังไม่ออกทุกวัน 22:00"
+    : "ลิงก์ใต้ชื่อกลุ่มส่งให้แต่ละกลุ่มได้เลย แต่ละอันเห็นแค่กลุ่มตัวเอง · เตือนทุกวัน 22:00";
   $app.innerHTML = head + data.chats.map((c) => groupSection(c, data)).join("") +
-    `<p class="note">อัปเดตทุกครั้งที่รีเฟรช · บอทเตือนคนที่ยังไม่ออกทุกวัน 22:00</p>`;
+    `<p class="note">${note}</p>`;
   // จอแคบตารางเลื่อนได้ — เลื่อนไปสุดขวาให้เห็นวันนี้ก่อน (คอลัมน์ที่สนใจที่สุด)
   document.querySelectorAll(".gridwrap").forEach((el) => (el.scrollLeft = el.scrollWidth));
+  document.querySelectorAll(".linkrow button").forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(btn.dataset.link);
+        btn.textContent = "คัดลอกแล้ว ✓";
+        btn.classList.add("done");
+      } catch {
+        // เบราว์เซอร์ไม่ให้คัดลอก — เลือกข้อความให้แทน จะได้ก๊อปเองได้
+        const code = btn.previousElementSibling;
+        const r = document.createRange();
+        r.selectNodeContents(code);
+        getSelection().removeAllRanges();
+        getSelection().addRange(r);
+        btn.textContent = "กดค้างเพื่อคัดลอก";
+      }
+      setTimeout(() => { btn.textContent = "คัดลอกลิงก์"; btn.classList.remove("done"); }, 2500);
+    };
+  });
 }
 
 function groupSection(c, data) {
@@ -252,13 +300,19 @@ function groupSection(c, data) {
       }).join("")}</ul>` : `<div class="empty">ยังไม่มีใครเช็คอินวันนี้</div>`}
     </div>`;
 
+  const link = c.link ? `<div class="linkrow">
+      <code title="${esc(c.link)}">${esc(c.link)}</code>
+      <button type="button" data-link="${esc(c.link)}">คัดลอกลิงก์</button>
+    </div>` : "";
+
   return `<div class="group-head">
       <span class="group-name">${esc(c.name)}</span>
       <span class="group-meta">${total} คน</span>
+      ${link}
     </div>${todayCard}${heat}${rank}${log}`;
 }
 
-keyFromUrl();
+readUrlAuth();
 load();
 </script>
 </body>

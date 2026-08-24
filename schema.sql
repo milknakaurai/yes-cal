@@ -78,6 +78,14 @@ CREATE TABLE IF NOT EXISTS workouts (
 CREATE INDEX IF NOT EXISTS idx_workouts_chat_date ON workouts(chat_id, logged_date);
 CREATE INDEX IF NOT EXISTS idx_workouts_member ON workouts(chat_id, line_user_id, logged_date);
 
+-- ลิงก์หน้าสถิติเฉพาะกลุ่ม — แต่ละกลุ่มมีโทเคนของตัวเอง เปิดได้เฉพาะข้อมูลกลุ่มตัวเอง
+-- worker สร้างตารางนี้ให้เองถ้ายังไม่มี (ensureTokenTable) ไม่ต้องรัน migration เอง
+CREATE TABLE IF NOT EXISTS chat_view_tokens (
+  chat_id TEXT PRIMARY KEY,
+  token TEXT NOT NULL UNIQUE,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
 -- นับการเรียก API รายวัน ไว้ดูว่าใช้โควตาฟรีไปเท่าไหร่ (ดูผลที่ /api/health)
 CREATE TABLE IF NOT EXISTS api_usage (
   day TEXT NOT NULL,            -- YYYY-MM-DD (เวลาไทย)

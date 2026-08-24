@@ -60,6 +60,10 @@ globalThis.fetch = async (url, opts) => {
   if (u.includes('/member/') || u.includes('/profile/')) {
     return { ok: true, status: 200, json: async () => ({ displayName: CURRENT_NAME }) };
   }
+  const summary = u.match(/\/group\/([^/]+)\/summary$/);
+  if (summary) {
+    return { ok: true, status: 200, json: async () => ({ groupName: 'กลุ่ม ' + summary[1] }) };
+  }
   return { ok: true, status: 200, json: async () => ({}), text: async () => '' };
 };
 let CURRENT_NAME = 'ใครสักคน';
@@ -79,10 +83,11 @@ async function send(event) {
   return replies.map(m => m.text);
 }
 let msgSeq = 1000;
-const textEvent = (userId, text, extra = {}) => ({
-  type: 'message', replyToken: 'rt', source: { type: 'group', groupId: 'G1', userId },
+const textEventIn = (groupId, userId, text, extra = {}) => ({
+  type: 'message', replyToken: 'rt', source: { type: 'group', groupId, userId },
   message: { type: 'text', id: 'm' + (++msgSeq), text, ...extra },
 });
+const textEvent = (userId, text, extra = {}) => textEventIn('G1', userId, text, extra);
 const imageEvent = (userId) => ({
   type: 'message', replyToken: 'rt', source: { type: 'group', groupId: 'G1', userId },
   message: { type: 'image', id: 'm' + (++msgSeq) },
@@ -193,6 +198,18 @@ async function api(path) {
 let failed = 0;
 const check = (label, ok) => { console.log(`  ${ok ? 'OK ' : 'พัง'} ${label}`); if (!ok) failed++; };
 
+// ---- กลุ่มที่สอง ไว้พิสูจน์ว่าลิงก์ของแต่ละกลุ่มเห็นแค่ของตัวเอง ----
+CURRENT_NAME = 'Ann';
+await send(textEventIn('G2', 'U_ANN', 'ออกกำลังกาย'));
+await send(textEventIn('G2', 'U_ANN', 'เข้าร่วม'));
+show('Ann (กลุ่ม G2) พิมพ์ "โยคะ 45 นาที"', await send(textEventIn('G2', 'U_ANN', 'โยคะ 45 นาที')));
+show('Ann พิมพ์ "เว็บ" (ขอลิงก์ของกลุ่มตัวเอง)', await send(textEventIn('G2', 'U_ANN', 'เว็บ')));
+const linkG2 = replies[0]?.text.match(/\?t=([a-f0-9]+)/);
+CURRENT_NAME = 'Milk';
+show('Milk (กลุ่ม G1) พิมพ์ "เว็บ"', await send(textEvent('U_MILK', 'เว็บ')));
+const linkG1 = replies[0]?.text.match(/\?t=([a-f0-9]+)/);
+const tokenG1 = linkG1?.[1], tokenG2 = linkG2?.[1];
+
 console.log('\n\n===== API หน้าเว็บ =====');
 const ch = await api('/api/challenge?days=14&key=dash');
 console.log(`/api/challenge → ${ch.chats.length} กลุ่ม · ช่วง ${ch.dates.length} วัน · วันนี้ ${ch.today}`);
@@ -215,6 +232,38 @@ console.log(`/api/overview → ${ov.users.length} คน`);
 
 const noKey = await worker.fetch(new Request('https://x/api/challenge'), env, ctx);
 check('ไม่ใส่ key ต้องโดนปฏิเสธ 401', noKey.status === 401);
+
+// ---- ลิงก์เฉพาะกลุ่ม ----
+console.log('\n--- ลิงก์เฉพาะกลุ่ม ---');
+check('บอทส่งลิงก์ให้ทั้งสองกลุ่ม', !!tokenG1 && !!tokenG2);
+check('โทเคนสองกลุ่มไม่ซ้ำกัน', tokenG1 !== tokenG2);
+check('เจ้าของเปิดรวมเห็นครบ 2 กลุ่ม', ch.chats.length === 2);
+check('หน้ารวมแนบลิงก์ให้ทุกกลุ่ม', ch.chats.every(c => typeof c.link === 'string' && c.link.includes('/workout?t=')));
+
+const only1 = await api(`/api/challenge?t=${tokenG1}`);
+const only2 = await api(`/api/challenge?t=${tokenG2}`);
+const namesOf = (d) => d.chats.flatMap(c => c.members.map(m => m.name));
+console.log('  ลิงก์ G1 เห็น:', namesOf(only1).join(', '), '| ลิงก์ G2 เห็น:', namesOf(only2).join(', '));
+check('ลิงก์ G1 เห็นกลุ่มเดียว', only1.chats.length === 1 && only1.scope === 'group');
+check('ลิงก์ G2 เห็นกลุ่มเดียว', only2.chats.length === 1 && only2.scope === 'group');
+check('ลิงก์ G1 ไม่เห็นสมาชิก G2', !namesOf(only1).includes('Ann'));
+check('ลิงก์ G2 ไม่เห็นสมาชิก G1', !namesOf(only2).some(n => ['Peach', 'Lek', 'Erk Sasin', 'Pream'].includes(n)));
+check('หน้ากลุ่มไม่แจกลิงก์ต่อ', only1.chats.every(c => !c.link));
+
+const badToken = await worker.fetch(new Request('https://x/api/challenge?t=ไม่มีจริง'), env, ctx);
+check('โทเคนมั่ว ๆ ต้องโดนปฏิเสธ 401', badToken.status === 401);
+const tokenNoKey = await worker.fetch(new Request(`https://x/api/challenge?t=${tokenG1}`), env, ctx);
+check('ใช้โทเคนอย่างเดียวเปิดได้ ไม่ต้องมีรหัสรวม', tokenNoKey.status === 200);
+const overviewByToken = await worker.fetch(new Request(`https://x/api/overview?t=${tokenG1}`), env, ctx);
+check('โทเคนกลุ่มเปิดหน้าแคลอรี่ไม่ได้', overviewByToken.status === 401);
+
+show('Milk พิมพ์ "ลิงก์ใหม่"', await send(textEvent('U_MILK', 'ลิงก์ใหม่')));
+const rotated = replies[0]?.text.match(/\?t=([a-f0-9]+)/)?.[1];
+check('ได้โทเคนใหม่ ไม่ซ้ำของเดิม', !!rotated && rotated !== tokenG1);
+const oldLink = await worker.fetch(new Request(`https://x/api/challenge?t=${tokenG1}`), env, ctx);
+check('ลิงก์เก่าใช้ไม่ได้แล้ว', oldLink.status === 401);
+const newLink = await worker.fetch(new Request(`https://x/api/challenge?t=${rotated}`), env, ctx);
+check('ลิงก์ใหม่ใช้ได้', newLink.status === 200);
 
 const wk = await worker.fetch(new Request('https://x/workout'), env, ctx);
 check('/workout เสิร์ฟหน้าชาเลนจ์ได้', wk.status === 200);

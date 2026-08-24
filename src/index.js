@@ -27,9 +27,14 @@ const ACTIVITY_LEVELS = [
   { n: 5, factor: 1.9, label: "หนักมาก/นักกีฬา/งานใช้แรง" },
 ];
 
+// origin ของ worker (เช่น https://yes-cal.xxx.workers.dev) — ตั้งทุกครั้งที่มี request เข้ามา
+// ใช้ประกอบลิงก์หน้าสถิติตอนบอทตอบในแชท จะได้ไม่ต้อง hardcode โดเมน
+let PUBLIC_ORIGIN = "";
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    PUBLIC_ORIGIN = url.origin;
 
     if (url.pathname === "/webhook" && request.method === "POST") {
       return handleWebhook(request, env, ctx);
@@ -772,12 +777,13 @@ async function getDayTotals(env, userId, date) {
 
 async function handleApi(url, request, env) {
   // กันคนนอกเปิดดู: ถ้าตั้ง DASHBOARD_KEY ไว้ ต้องแนบ ?key= ให้ตรง
+  // ยกเว้น /api/challenge?t=<token> ที่ใช้โทเคนเฉพาะกลุ่มแทน (กลุ่มจะได้เปิดเองได้โดยไม่ต้องรู้รหัสรวม)
   const dashKey = sec(env, "DASHBOARD_KEY");
-  if (dashKey) {
-    const key = (url.searchParams.get("key") || request.headers.get("x-dashboard-key") || "").trim();
-    if (key !== dashKey) {
-      return jsonResponse({ error: "unauthorized" }, 401);
-    }
+  const key = (url.searchParams.get("key") || request.headers.get("x-dashboard-key") || "").trim();
+  const authed = !dashKey || key === dashKey;
+  const groupToken = (url.searchParams.get("t") || "").trim();
+  if (!authed && !(url.pathname === "/api/challenge" && groupToken)) {
+    return jsonResponse({ error: "unauthorized" }, 401);
   }
 
   // หน้าตรวจสุขภาพระบบ: เช็คว่า secret ครบไหม + ยิงทดสอบ Gemini กับ LINE จริง
@@ -866,9 +872,21 @@ async function handleApi(url, request, env) {
     const today = bkkToday();
     const weekStart = bkkDateOffset(-6);
 
-    const chats = (await env.DB.prepare(
-      `SELECT id, type FROM chat_targets WHERE mode = 'challenge' ORDER BY created_at`
-    ).all()).results;
+    // มีโทเคน = เห็นแค่กลุ่มตัวเอง · ไม่มีโทเคนแต่มีรหัสรวม = เจ้าของ เห็นทุกกลุ่ม
+    let chats;
+    if (groupToken) {
+      const chatId = await chatIdForToken(env, groupToken);
+      chats = chatId
+        ? (await env.DB.prepare(
+            `SELECT id, type FROM chat_targets WHERE id = ? AND mode = 'challenge'`
+          ).bind(chatId).all()).results
+        : [];
+      if (!chats.length) return jsonResponse({ error: "unauthorized" }, 401);
+    } else {
+      chats = (await env.DB.prepare(
+        `SELECT id, type FROM chat_targets WHERE mode = 'challenge' ORDER BY created_at`
+      ).all()).results;
+    }
 
     const out = [];
     for (const c of chats) {
@@ -917,6 +935,8 @@ async function handleApi(url, request, env) {
         id: c.id,
         type: c.type,
         name: await groupName(env, c),
+        // ลิงก์เฉพาะกลุ่ม โชว์เฉพาะหน้ารวมของเจ้าของ — หน้ากลุ่มไม่ต้องเห็น (ตัวเองถืออยู่แล้ว)
+        link: groupToken ? null : workoutLink(await getViewToken(env, c.id)),
         members: memberOut,
         today_log: todayRows.map((w) => ({
           name: nameOf[w.line_user_id] || "ไม่ทราบชื่อ",
@@ -928,10 +948,61 @@ async function handleApi(url, request, env) {
         })),
       });
     }
-    return jsonResponse({ today, dates, chats: out });
+    return jsonResponse({ today, dates, chats: out, scope: groupToken ? "group" : "all" });
   }
 
   return jsonResponse({ error: "not found" }, 404);
+}
+
+// ---------- ลิงก์เฉพาะกลุ่ม ----------
+// แต่ละกลุ่มมีโทเคนลับของตัวเอง เปิดหน้าสถิติได้เฉพาะข้อมูลกลุ่มตัวเอง กลุ่มอื่นเปิดไม่ได้
+// (ใช้ตารางแยกแทนการ ALTER chat_targets เจ้าของจะได้ไม่ต้องรัน migration เอง)
+let tokenTableReady = false;
+async function ensureTokenTable(env) {
+  if (tokenTableReady) return;
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS chat_view_tokens (
+       chat_id TEXT PRIMARY KEY,
+       token TEXT NOT NULL UNIQUE,
+       created_at TEXT DEFAULT (datetime('now')))`
+  ).run();
+  tokenTableReady = true;
+}
+
+async function getViewToken(env, chatId) {
+  await ensureTokenTable(env);
+  const row = await env.DB.prepare(
+    `SELECT token FROM chat_view_tokens WHERE chat_id = ?`
+  ).bind(chatId).first();
+  if (row?.token) return row.token;
+  const token = crypto.randomUUID().replace(/-/g, "");
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO chat_view_tokens (chat_id, token) VALUES (?, ?)`
+  ).bind(chatId, token).run();
+  return token;
+}
+
+// ออกโทเคนใหม่ ลิงก์เดิมจะใช้ไม่ได้ทันที
+async function resetViewToken(env, chatId) {
+  await ensureTokenTable(env);
+  const token = crypto.randomUUID().replace(/-/g, "");
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO chat_view_tokens (chat_id, token) VALUES (?, ?)`
+  ).bind(chatId, token).run();
+  return token;
+}
+
+async function chatIdForToken(env, token) {
+  if (!token) return null;
+  await ensureTokenTable(env);
+  const row = await env.DB.prepare(
+    `SELECT chat_id FROM chat_view_tokens WHERE token = ?`
+  ).bind(token).first();
+  return row?.chat_id || null;
+}
+
+function workoutLink(token) {
+  return `${PUBLIC_ORIGIN}/workout?t=${token}`;
 }
 
 // ชื่อกลุ่มไม่ได้เก็บไว้ใน D1 — ถาม LINE ตอนเปิดหน้า (endpoint นี้ไม่กินโควตา push)
@@ -1119,6 +1190,8 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   if (/^(ใครยังไม่ออก|ใครยังไม่|เช็คชื่อ|วันนี้)$/.test(text)) return replyChallengeToday(env, event, chatId);
   if (/^(เตือน|ทวง|แท็ก)$/.test(text)) return replyNudge(env, event, chatId);
   if (/^(สมาชิก|รายชื่อ|ใครอยู่บ้าง)$/.test(text)) return replyMembers(env, event, chatId);
+  if (/^(เว็บ|ลิงก์|ลิงค์|ลิ้งค์|link|dashboard)$/i.test(text)) return replyDashboardLink(env, event, chatId);
+  if (/^(ลิงก์ใหม่|ลิงค์ใหม่|เปลี่ยนลิงก์|เปลี่ยนลิงค์)$/.test(text)) return replyDashboardLink(env, event, chatId, true);
 
   const mentioneesForDelete = event.message?.mention?.mentionees || [];
   const delMatch = stripMentions(text, mentioneesForDelete).match(/^(?:ลบ|ลบล่าสุด|ยกเลิก)\s*(\d+)?$/);
@@ -1553,6 +1626,20 @@ async function replyLeaderboard(env, event, chatId) {
   return lineReply(env, event.replyToken, lines.join("\n"));
 }
 
+// ลิงก์หน้าสถิติเฉพาะกลุ่มนี้ — กลุ่มอื่นเปิดไม่ได้ เพราะคนละโทเคน
+// reset = ออกโทเคนใหม่ ไว้ใช้ตอนลิงก์เก่าหลุดออกไปนอกกลุ่ม
+async function replyDashboardLink(env, event, chatId, reset = false) {
+  const token = reset ? await resetViewToken(env, chatId) : await getViewToken(env, chatId);
+  return lineReply(env, event.replyToken, [
+    reset ? "เปลี่ยนลิงก์ใหม่ให้แล้ว 🔄 ลิงก์เก่าใช้ไม่ได้อีกต่อไป" : "หน้าสถิติของกลุ่มนี้ 📊",
+    workoutLink(token),
+    "",
+    "ลิงก์นี้เห็นเฉพาะข้อมูลกลุ่มนี้กลุ่มเดียว กลุ่มอื่นเปิดไม่ได้",
+    "เปิดแล้วเบราว์เซอร์จำให้เลย ไม่ต้องใส่รหัสอะไร",
+    reset ? "" : "ถ้าลิงก์หลุดออกไปนอกกลุ่ม พิมพ์ \"ลิงก์ใหม่\" เพื่อเปลี่ยนได้",
+  ].filter(Boolean).join("\n"));
+}
+
 function challengeWelcomeText() {
   return [
     "เปิดโหมดชาเลนจ์ออกกำลังกายแล้วครับ 💪🔥",
@@ -1561,6 +1648,7 @@ function challengeWelcomeText() {
     "จากนั้นออกกำลังกายเสร็จก็ส่งรูปมาได้เลย — บอทอ่านรูปแล้วเช็คอินให้อัตโนมัติ",
     "",
     "ทุกวัน 22:00 ผมจะประกาศว่าใครยังไม่ออก ⏰",
+    "อยากดูสถิติเป็นหน้าเว็บ พิมพ์ \"เว็บ\" เดี๋ยวส่งลิงก์ให้",
     "พิมพ์ \"คำสั่ง\" เพื่อดูวิธีใช้ทั้งหมด",
   ].join("\n");
 }
@@ -1638,6 +1726,8 @@ function challengeHelpText() {
     "   (แท็กชื่อเพื่อน หรือ reply ที่รูปเขา แล้วพิมพ์ \"เมื่อวาน\" ก็แก้ให้เขาได้)",
     "เตือน — แท็กชื่อคนที่ยังไม่ออก (เด้งแจ้งเตือนถึงตัว)",
     "อันดับ — ตารางคะแนน 7 วันล่าสุด",
+    "เว็บ — ลิงก์หน้าสถิติของกลุ่มนี้ (กลุ่มอื่นเปิดไม่ได้)",
+    "ลิงก์ใหม่ — เปลี่ยนลิงก์ ถ้าอันเก่าหลุดออกนอกกลุ่ม",
     "ออกจากชาเลนจ์ — ถอนตัว",
     "",
     "ทุกวัน 22:00 บอทจะเตือนคนที่ยังไม่ออกให้เองครับ ⏰",
