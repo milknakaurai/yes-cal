@@ -1143,6 +1143,17 @@ async function handleApi(url, request, env) {
     return jsonResponse(report);
   }
 
+  // ดูข้อมูลดิบจากนาฬิกา ไว้ใช้ตอนแมปฟิลด์ให้ตรงกับของจริง
+  //   /api/device-peek?key=...&provider=whoop&kind=workout
+  if (url.pathname === "/api/device-peek") {
+    return jsonResponse(await W.peekRaw(
+      env,
+      url.searchParams.get("provider") || "whoop",
+      url.searchParams.get("kind") || "workout",
+      url.searchParams.get("user") || null
+    ));
+  }
+
   if (url.pathname === "/api/overview") {
     const days = Math.min(parseInt(url.searchParams.get("days") || "14", 10) || 14, 90);
     const dates = lastNDates(days);

@@ -421,6 +421,14 @@ show('Milk พิมพ์ "ตัดการเชื่อมต่อ"', awa
 check('ตัดการเชื่อมต่อแล้วโทเคนหายหมด',
   db.prepare(`SELECT COUNT(*) AS n FROM device_links WHERE line_user_id='U_DM'`).get().n === 0);
 
+// ---- ดูข้อมูลดิบ ----
+const peekNoLink = await api('/api/device-peek?key=dash&provider=whoop&kind=workout');
+check('ยังไม่มีใครเชื่อม → บอกเหตุผล ไม่ระเบิด', String(peekNoLink.error || '').includes('ยังไม่มีใครเชื่อม'));
+const peekNoAuth = await worker.fetch(new Request('https://x/api/device-peek?provider=whoop'), env, ctx);
+check('device-peek ต้องมี DASHBOARD_KEY', peekNoAuth.status === 401);
+const peekBad = await api('/api/device-peek?key=dash&provider=มั่ว&kind=workout');
+check('provider มั่ว → ตอบ error ไม่ throw', !!peekBad.error);
+
 const health = await api('/api/health?key=dash');
 console.log('  wearables ใน /api/health:', JSON.stringify(health.wearables));
 check('/api/health บอกว่าตั้งค่าครบแล้ว', health.wearables.whoop.ready && health.wearables.google.ready);

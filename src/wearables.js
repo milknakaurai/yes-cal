@@ -306,6 +306,50 @@ export async function verifyConnection(env, provider, accessToken) {
   return { ok: false };
 }
 
+// ---------------------------------------------------------------- ดูข้อมูลดิบ (ไว้ debug)
+
+// endpoint ที่ผู้ให้บริการใช้ดึงข้อมูลจริง — ฝั่ง Google ยืนยันจาก discovery doc แล้ว
+// ฝั่ง WHOOP ยังไม่ได้เทียบกับของจริง (developer.whoop.com เข้าไม่ได้จาก session ที่เขียนโค้ดนี้)
+export const DATA_URLS = {
+  whoop: {
+    workout: "https://api.prod.whoop.com/developer/v2/activity/workout?limit=5",
+    sleep: "https://api.prod.whoop.com/developer/v2/activity/sleep?limit=5",
+    recovery: "https://api.prod.whoop.com/developer/v2/recovery?limit=5",
+  },
+  google: {
+    workout: "https://health.googleapis.com/v4/users/me/dataTypes/exercise/dataPoints?pageSize=5",
+    sleep: "https://health.googleapis.com/v4/users/me/dataTypes/sleep/dataPoints?pageSize=5",
+    recovery:
+      "https://health.googleapis.com/v4/users/me/dataTypes/daily-resting-heart-rate/dataPoints?pageSize=5",
+  },
+};
+
+// เจ้าของเรียกดูได้ว่าผู้ให้บริการส่งอะไรกลับมาจริง ๆ ไว้ใช้แมปฟิลด์ให้ถูก
+// ไม่ได้ตั้งใจให้ใช้ประจำ — ต้องมี DASHBOARD_KEY ถึงเรียกได้
+export async function peekRaw(env, provider, kind, lineUserId) {
+  await ensureWearableTables(env);
+  const url = DATA_URLS[provider]?.[kind];
+  if (!url) return { error: `ไม่รู้จัก provider/kind: ${provider}/${kind}` };
+
+  let userId = lineUserId;
+  if (!userId) {
+    const row = await env.DB.prepare(
+      `SELECT line_user_id FROM device_links WHERE provider = ? ORDER BY updated_at DESC LIMIT 1`
+    ).bind(provider).first();
+    userId = row?.line_user_id;
+  }
+  if (!userId) return { error: `ยังไม่มีใครเชื่อม ${provider} ไว้` };
+
+  const token = await getAccessToken(env, userId, provider);
+  if (!token) return { error: "ไม่มีโทเคนที่ใช้ได้ (ยังไม่เชื่อม หรือถูกถอนสิทธิ์ไปแล้ว)" };
+
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const text = await res.text();
+  let body = null;
+  try { body = JSON.parse(text); } catch { body = text.slice(0, 800); }
+  return { url, status: res.status, body };
+}
+
 // เช็คว่าตั้ง secret ครบไหม ใช้ตอบใน /api/health และกันไม่ให้เริ่ม flow ทั้งที่ยังตั้งไม่ครบ
 export function providerReady(env, provider) {
   const p = PROVIDERS[provider];
