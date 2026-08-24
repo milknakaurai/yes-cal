@@ -85,13 +85,13 @@
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   th.num { text-align: right; }
   .empty { color: var(--text-muted); font-size: 13.5px; padding: 12px 0; }
-  .sleep-row { display: flex; align-items: baseline; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--grid); flex-wrap: wrap; }
-  .sleep-row:last-child { border-bottom: none; }
-  .sleep-row .who { font-weight: 600; font-size: 14px; min-width: 90px; }
-  .sleep-row .hrs { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .sleep-row .hrs small { font-size: 13px; font-weight: 400; color: var(--text-secondary); }
-  .sleep-row .bits { font-size: 12.5px; color: var(--text-secondary); }
-  .sleep-row .src { font-size: 11.5px; color: var(--text-muted); margin-left: auto; }
+  .sleep-people { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .sleep-p .who { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+  .sleep-p .who span { font-weight: 400; color: var(--text-muted); }
+  .sleep-p .line { font-size: 13.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; padding: 2px 0; }
+  .sleep-p .line b { color: var(--text-primary); font-weight: 600; }
+  .sleep-p .big { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+  .sleep-p .extra { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
   #tooltip {
     position: fixed; pointer-events: none; z-index: 10; display: none;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
@@ -158,24 +158,36 @@ const hhmm = (min) => `${Math.floor(min / 60)}.${String(min % 60).padStart(2, "0
 function renderSleep(data) {
   const slot = document.getElementById("sleepcard");
   if (!slot || !data.people?.length) return;
-  const rows = data.people.map((p) => {
+  // รูปแบบเดียวกับที่บอทตอบในแชท: Sleep / Score → Deep / REM → Recovery หรือ Readiness
+  const rows = `<div class="sleep-people">` + data.people.map((p) => {
     const s = p.sleep, r = p.recovery;
-    const bits = [];
-    if (s?.performance_pct != null) bits.push(`Score ${s.performance_pct}%`);
-    else if (s?.efficiency_pct != null) bits.push(`ประสิทธิภาพ ${s.efficiency_pct}%`);
-    if (s?.deep_min) bits.push(`หลับลึก ${s.deep_min} น.`);
-    if (s?.rem_min) bits.push(`REM ${s.rem_min} น.`);
-    if (r?.recovery_pct != null) bits.push(`Recovery ${r.recovery_pct}%`);
-    else if (r?.readiness != null) bits.push(`Readiness ${r.readiness}${r.readiness_inputs?.sleep_score_estimated ? "*" : ""}`);
-    if (r?.resting_hr != null) bits.push(`หัวใจพัก ${r.resting_hr}`);
-    if (r?.hrv_ms != null) bits.push(`HRV ${r.hrv_ms}`);
-    return `<div class="sleep-row">
-      <span class="who">${esc(p.name)}</span>
-      <span class="hrs">${s?.asleep_min ? hhmm(s.asleep_min) : '<small>ยังไม่มีข้อมูล</small>'}</span>
-      <span class="bits">${bits.join(" · ")}</span>
-      <span class="src">${p.provider === "whoop" ? "WHOOP" : "Fitbit"}</span>
+    const est = r?.readiness_inputs?.sleep_score_estimated;
+    const out = [];
+
+    const head = [];
+    if (s?.asleep_min) head.push(`<b class="big">${hhmm(s.asleep_min)}</b>`);
+    if (s?.performance_pct != null) head.push(`Score <b>${s.performance_pct}%</b>`);
+    else if (s?.score_for_readiness != null) head.push(`Score <b>${s.score_for_readiness}${est ? "*" : ""}</b>`);
+    out.push(head.length ? head.join(" / ") : "ยังไม่มีข้อมูลการนอน");
+
+    const stages = [];
+    if (s?.deep_min) stages.push(`Deep <b>${hhmm(s.deep_min)}</b>`);
+    if (s?.rem_min) stages.push(`REM <b>${hhmm(s.rem_min)}</b>`);
+    if (stages.length) out.push(stages.join(" / "));
+
+    if (r?.recovery_pct != null) out.push(`Recovery <b>${r.recovery_pct}%</b>`);
+    else if (r?.readiness != null) out.push(`Readiness <b>${r.readiness}${est ? "*" : ""}</b>`);
+
+    const extra = [];
+    if (r?.resting_hr != null) extra.push(`หัวใจขณะพัก ${r.resting_hr}`);
+    if (r?.hrv_ms != null) extra.push(`HRV ${r.hrv_ms} ms`);
+
+    return `<div class="sleep-p">
+      <div class="who">${esc(p.name)} <span>${p.provider === "whoop" ? "Whoop" : "Fitbit"}</span></div>
+      ${out.map((l) => `<div class="line">${l}</div>`).join("")}
+      ${extra.length ? `<div class="extra">${extra.join(" · ")}</div>` : ""}
     </div>`;
-  }).join("");
+  }).join("") + `</div>`;
   const note = data.people.some((p) => p.recovery?.readiness != null && p.recovery.readiness_inputs?.sleep_score_estimated)
     ? `<p class="empty">* Readiness คำนวณจากคะแนนการนอนโดยประมาณ — API ของ Fitbit ไม่มีคะแนนให้ดึง พิมพ์ "คะแนนนอน 74" ในแชทเพื่อใส่ค่าจริง</p>`
     : "";

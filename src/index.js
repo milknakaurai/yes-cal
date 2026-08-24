@@ -1096,40 +1096,37 @@ async function sleepAudience(env, chatId, userId) {
 // 428 นาที → "7.08 hrs" ตามรูปแบบที่เจ้าของขอ
 const hrsDot = (min) => `${Math.floor(min / 60)}.${String(min % 60).padStart(2, "0")} hrs`;
 
-const PROVIDER_LABEL = { whoop: "WHOOP", google: "Fitbit" };
+const PROVIDER_LABEL = { whoop: "Whoop", google: "Fitbit" };
 
-// รูปแบบที่เจ้าของกำหนด — ชื่อ + ยี่ห้อ / บรรทัดการนอน / บรรทัดฟื้นตัว
-//   Milk · WHOOP
+// รูปแบบที่เจ้าของกำหนดไว้:
+//   Milk Whoop —
+//   (บรรทัดว่าง)
 //   Sleep 7.08 hrs / Score 88%
+//   Deep 1.45 hrs / REM 1.39 hrs
 //   Recovery 71%
-// ฝั่ง Fitbit ไม่มี Score กับ Readiness ให้ดึง (ดูหมายเหตุใน normalizeGoogleSleep)
-// จึงใส่เท่าที่ API มีจริง ไม่กุตัวเลขมาเติมให้ครบรูปแบบ
+//
+// Whoop มีคะแนนการนอนของตัวเอง (เป็น %) · Fitbit ไม่มี จึงใช้คะแนนที่ป้อนสูตร readiness
+// ติดดาวไว้ถ้าเป็นค่าประมาณ · ค่าไหนไม่มีก็ข้ามบรรทัดนั้นไป ไม่ใส่ตัวเลขปลอมให้ครบรูปแบบ
 function sleepBlock(name, data) {
   const s = data.sleep, r = data.recovery;
-  const out = [`${name} · ${PROVIDER_LABEL[data.provider] || data.provider}`];
+  const est = r?.readiness_inputs?.sleep_score_estimated;
+  const lines = [`${name} ${PROVIDER_LABEL[data.provider] || data.provider} —`, ""];
 
-  const first = [];
-  if (s?.asleep_min) first.push(`Sleep ${hrsDot(s.asleep_min)}`);
-  if (s?.performance_pct != null) first.push(`Score ${s.performance_pct}%`);
-  else if (s?.efficiency_pct != null) first.push(`ประสิทธิภาพ ${s.efficiency_pct}%`);
-  out.push(first.length ? first.join(" / ") : "ยังไม่มีข้อมูลการนอน");
+  const head = [];
+  if (s?.asleep_min) head.push(`Sleep ${hrsDot(s.asleep_min)}`);
+  if (s?.performance_pct != null) head.push(`Score ${s.performance_pct}%`);
+  else if (s?.score_for_readiness != null) head.push(`Score ${s.score_for_readiness}${est ? "*" : ""}`);
+  lines.push(head.length ? head.join(" / ") : "ยังไม่มีข้อมูลการนอน");
 
   const stages = [];
-  if (s?.deep_min) stages.push(`หลับลึก ${s.deep_min} น.`);
-  if (s?.rem_min) stages.push(`REM ${s.rem_min} น.`);
-  if (stages.length) out.push(stages.join(" · "));
+  if (s?.deep_min) stages.push(`Deep ${hrsDot(s.deep_min)}`);
+  if (s?.rem_min) stages.push(`REM ${hrsDot(s.rem_min)}`);
+  if (stages.length) lines.push(stages.join(" / "));
 
-  const second = [];
-  if (r?.recovery_pct != null) second.push(`Recovery ${r.recovery_pct}%`);
-  // ดาวหมายถึงคะแนนการนอนที่ป้อนให้สูตรเป็นค่าประมาณ ไม่ใช่ของ Fitbit จริง
-  else if (r?.readiness != null) {
-    second.push(`Readiness ${r.readiness}${r.readiness_inputs?.sleep_score_estimated ? "*" : ""}`);
-  }
-  if (r?.resting_hr != null) second.push(`หัวใจขณะพัก ${r.resting_hr}`);
-  if (r?.hrv_ms != null) second.push(`HRV ${r.hrv_ms} ms`);
-  if (second.length) out.push(second.join(" · "));
+  if (r?.recovery_pct != null) lines.push(`Recovery ${r.recovery_pct}%`);
+  else if (r?.readiness != null) lines.push(`Readiness ${r.readiness}${est ? "*" : ""}`);
 
-  return out.join("\n");
+  return lines.join("\n");
 }
 
 async function replySleep(env, event, chatId, userId) {

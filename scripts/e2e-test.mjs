@@ -509,6 +509,36 @@ console.log(`  (ค่าประมาณคะแนนการนอนจ�
 check('ประมาณคะแนนการนอนได้ตัวเลขในช่วงที่สมเหตุสมผล', est > 0 && est <= 100);
 check('ไม่มีข้อมูลการนอน → ไม่ประมาณ', WN.estimateSleepScore(null) === null);
 
+// รูปแบบข้อความที่เจ้าของกำหนด — ล็อกไว้กันแก้แล้วเพี้ยน
+{
+  const src = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+  const cut = src.slice(src.indexOf('// 428 นาที'), src.indexOf('async function replySleep'));
+  const fmt = await import('data:text/javascript,' + encodeURIComponent(cut + '\nexport { sleepBlock };'));
+  const whoop = fmt.sleepBlock('Milk', { provider: 'whoop',
+    sleep: { asleep_min: 428, performance_pct: 88, deep_min: 105, rem_min: 99 },
+    recovery: { recovery_pct: 71 } });
+  const fitbit = fmt.sleepBlock('Charlie:P', { provider: 'google',
+    sleep: { asleep_min: 395, deep_min: 62, rem_min: 88, score_for_readiness: 74 },
+    recovery: { readiness: 69, readiness_inputs: { sleep_score_estimated: false } } });
+  console.log('\n' + whoop + '\n\n\n' + fitbit + '\n');
+  check('Whoop: หัวข้อ "ชื่อ ยี่ห้อ —" แล้วเว้นบรรทัด',
+    whoop.startsWith('Milk Whoop —\n\n'));
+  check('Whoop: Sleep / Score บรรทัดเดียว', whoop.includes('Sleep 7.08 hrs / Score 88%'));
+  check('Whoop: Deep / REM เป็นชั่วโมง', whoop.includes('Deep 1.45 hrs / REM 1.39 hrs'));
+  check('Whoop: ปิดท้ายด้วย Recovery', whoop.trim().endsWith('Recovery 71%'));
+  check('Fitbit: Score ไม่มี % (คนละสเกลกับ Whoop)', fitbit.includes('Sleep 6.35 hrs / Score 74'));
+  check('Fitbit: ปิดท้ายด้วย Readiness', fitbit.trim().endsWith('Readiness 69'));
+  check('ไม่มีดาวเมื่อใช้คะแนนจริง', !fitbit.includes('*'));
+  const guess = fmt.sleepBlock('X', { provider: 'google',
+    sleep: { asleep_min: 400, score_for_readiness: 89 },
+    recovery: { readiness: 88, readiness_inputs: { sleep_score_estimated: true } } });
+  check('ติดดาวทั้ง Score และ Readiness เมื่อเป็นค่าประมาณ',
+    guess.includes('Score 89*') && guess.includes('Readiness 88*'));
+  check('ไม่มีข้อมูล → ไม่ขึ้นบรรทัดตัวเลขปลอม',
+    fmt.sleepBlock('Y', { provider: 'whoop', sleep: null, recovery: null })
+      .includes('ยังไม่มีข้อมูลการนอน'));
+}
+
 show('Milk พิมพ์ "คะแนนนอน 74"', await send(dmEvent('U_DM', 'คะแนนนอน 74')));
 check('เก็บคะแนนที่กรอกเองลงฐานข้อมูล',
   db.prepare(`SELECT score FROM sleep_scores WHERE line_user_id='U_DM'`).get()?.score === 74);
