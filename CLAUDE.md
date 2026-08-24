@@ -64,6 +64,10 @@ bash scripts/deploy.sh
   ส่วนข้อความทวงตอน 22:00 ยังกวน ๆ ได้ตามเดิม
 - `schema.sql` — users / meals / weights / chat_targets / challenge_members / workouts / api_usage
 - `scripts/deploy.sh` — deploy ครบจบในสคริปต์เดียว
+- `docs/wearables.md` — สเปกการเชื่อม Whoop + Fitbit (ยังไม่ได้เขียนโค้ด รอเจ้าของสร้างแอปในสองพอร์ทัลก่อน)
+  **Fitbit API เดิมตาย ก.ย. 2026** ต้องใช้ Google Health API v4 เท่านั้น
+  **Google Health API อ่านข้อมูล Whoop ไม่ได้** — Whoop เข้า Health Connect ซึ่งเป็นที่เก็บบนเครื่อง ไม่มี cloud API
+  สเปกฝั่ง Google ยืนยันแล้วจาก discovery doc จริง · ฝั่ง Whoop ยังต้องเทียบกับ response จริง
 
 ## หมายเหตุการออกแบบที่สำคัญ
 
