@@ -166,6 +166,7 @@ function renderSleep(data) {
     if (s?.deep_min) bits.push(`หลับลึก ${s.deep_min} น.`);
     if (s?.rem_min) bits.push(`REM ${s.rem_min} น.`);
     if (r?.recovery_pct != null) bits.push(`Recovery ${r.recovery_pct}%`);
+    else if (r?.readiness != null) bits.push(`Readiness ${r.readiness}${r.readiness_inputs?.sleep_score_estimated ? "*" : ""}`);
     if (r?.resting_hr != null) bits.push(`หัวใจพัก ${r.resting_hr}`);
     if (r?.hrv_ms != null) bits.push(`HRV ${r.hrv_ms}`);
     return `<div class="sleep-row">
@@ -175,7 +176,10 @@ function renderSleep(data) {
       <span class="src">${p.provider === "whoop" ? "WHOOP" : "Fitbit"}</span>
     </div>`;
   }).join("");
-  slot.innerHTML = `<h2>การนอน &amp; recovery คืนล่าสุด 😴</h2>${rows}`;
+  const note = data.people.some((p) => p.recovery?.readiness != null && p.recovery.readiness_inputs?.sleep_score_estimated)
+    ? `<p class="empty">* Readiness คำนวณจากคะแนนการนอนโดยประมาณ — API ของ Fitbit ไม่มีคะแนนให้ดึง พิมพ์ "คะแนนนอน 74" ในแชทเพื่อใส่ค่าจริง</p>`
+    : "";
+  slot.innerHTML = `<h2>การนอน &amp; recovery คืนล่าสุด 😴</h2>${rows}${note}`;
   slot.style.display = "";
 }
 

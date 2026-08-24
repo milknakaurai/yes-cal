@@ -472,6 +472,48 @@ check('WHOOP: อ่าน recovery ครบ',
 check('WHOOP: ยังไม่ได้คะแนน → ไม่เอาตัวเลขมั่วมาโชว์',
   WN.normalizeWhoopRecovery({ records: [{ score_state: 'PENDING_SCORE', score: { recovery_score: 99 } }] }).recovery_pct === null);
 
+// ---- Readiness (สูตรที่เจ้าของให้มา) ----
+// ยึดผลลัพธ์จากสูตร Python ต้นฉบับ ถ้าเลขเพี้ยนเมื่อไหร่แปลว่าแก้สูตรผิด
+for (const [inp, want] of [
+  [{ todayHrv: 25, baselineHrv: 25, sleepScore: 74, prevDayAzm: 0 }, 84],
+  [{ todayHrv: 30, baselineHrv: 25, sleepScore: 74, prevDayAzm: 20 }, 89],
+  [{ todayHrv: 20, baselineHrv: 25, sleepScore: 60, prevDayAzm: 91 }, 60],
+  [{ todayHrv: 10, baselineHrv: 25, sleepScore: 50, prevDayAzm: 200 }, 31],
+]) {
+  check(`readiness(${inp.todayHrv}/${inp.baselineHrv}, ${inp.sleepScore}, ${inp.prevDayAzm}) = ${want}`,
+    WN.readinessScore(inp) === want);
+}
+check('ขาดข้อมูลตัวใดตัวหนึ่ง → ไม่เดา คืน null',
+  WN.readinessScore({ todayHrv: null, baselineHrv: 25, sleepScore: 74, prevDayAzm: 0 }) === null &&
+  WN.readinessScore({ todayHrv: 25, baselineHrv: 25, sleepScore: null, prevDayAzm: 0 }) === null);
+check('AZM หนักมากก็ไม่ต่ำกว่าพื้น 40',
+  WN.readinessScore({ todayHrv: 25, baselineHrv: 25, sleepScore: 100, prevDayAzm: 9999 }) ===
+  Math.round(85 * 0.45 + 100 * 0.35 + 40 * 0.20));
+
+const hrvS = WN.hrvSeries({ dataPoints: [25, 30, 20, 25].map((v) => ({
+  dailyHeartRateVariability: { averageHeartRateVariabilityMilliseconds: v } })) });
+check('HRV: วันนี้คือรายการแรก', hrvS.today === 25);
+check('ค่าฐานไม่รวมวันนี้ (ไม่งั้นวิ่งตามตัวเอง)', hrvS.baseline === 25);
+
+const azmToday = new Date(Date.now() + 7 * 3600e3 - 86400e3).toISOString().slice(0, 10);
+const azmBody = { dataPoints: [
+  { activeZoneMinutes: { activeZoneMinutes: '20', interval: { startTime: azmToday + 'T02:00:00Z' } } },
+  { activeZoneMinutes: { activeZoneMinutes: '15', interval: { startTime: azmToday + 'T09:00:00Z' } } },
+  { activeZoneMinutes: { activeZoneMinutes: '99', interval: { startTime: '2020-01-01T00:00:00Z' } } },
+]};
+check('AZM: บวกเฉพาะของวันที่ขอ', WN.azmForDate(azmBody, azmToday) === 35);
+check('AZM: ไม่มีข้อมูลวันนั้น → null ไม่ใช่ 0', WN.azmForDate(azmBody, '2019-05-05') === null);
+
+const est = WN.estimateSleepScore({ asleep_min: 395, deep_min: 62, rem_min: 88, efficiency_pct: 96 });
+console.log(`  (ค่าประมาณคะแนนการนอนจากข้อมูลจริงของแฟน = ${est} · Fitbit จริงบอก 74)`);
+check('ประมาณคะแนนการนอนได้ตัวเลขในช่วงที่สมเหตุสมผล', est > 0 && est <= 100);
+check('ไม่มีข้อมูลการนอน → ไม่ประมาณ', WN.estimateSleepScore(null) === null);
+
+show('Milk พิมพ์ "คะแนนนอน 74"', await send(dmEvent('U_DM', 'คะแนนนอน 74')));
+check('เก็บคะแนนที่กรอกเองลงฐานข้อมูล',
+  db.prepare(`SELECT score FROM sleep_scores WHERE line_user_id='U_DM'`).get()?.score === 74);
+show('Milk พิมพ์ "คะแนนนอน 250" (นอกช่วง)', await send(dmEvent('U_DM', 'คะแนนนอน 250')));
+
 const sleepApi = await api('/api/sleep?key=dash');
 check('/api/sleep ตอบได้แม้ยังไม่มีใครเชื่อม', Array.isArray(sleepApi.people));
 const sleepNoAuth = await worker.fetch(new Request('https://x/api/sleep'), env, ctx);

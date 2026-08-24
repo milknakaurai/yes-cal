@@ -107,6 +107,27 @@ DataPoint.dailyHeartRateVariability.averageHeartRateVariabilityMilliseconds
 
 `SleepMetadata.mainSleep` ใช้เลือกการนอนหลักของคืนนั้นได้ ไม่ต้องเดาจากลำดับ
 
+### Readiness — คำนวณเอง
+
+เจ้าของให้สูตรมา อยู่ที่ `readinessScore()` ใน `src/wearables.js` (มีเทสยึดผลลัพธ์ไว้ 4 เคส
+เทียบกับสูตร Python ต้นฉบับ — เลขเพี้ยนเมื่อไหร่คือแก้ผิด)
+
+```
+hrv_comp      = ratio >= 1 ? min(100, 85 + (ratio-1)*50) : max(0, 85 - (1-ratio)*120)
+activity_comp = azm <= 40 ? 100 : max(40, 100 - (azm-40)*0.8)
+readiness     = hrv_comp*0.45 + sleep_score*0.35 + activity_comp*0.20
+```
+
+ที่มาของ input แต่ละตัว:
+- `today_hrv` / `baseline_hrv` — `daily-heart-rate-variability` ดึง 30 วัน
+  **ค่าฐานไม่รวมวันนี้** ไม่งั้นค่าฐานจะวิ่งตามตัวเองจนอัตราส่วนเป็น 1 เสมอ
+- `prev_day_azm` — `active-zone-minutes` เป็นข้อมูลรายช่วง ต้องบวกเองทั้งวัน
+- `sleep_score` — **ไม่มีใน API** ถ้าผู้ใช้ไม่กรอกเองจะใช้ `estimateSleepScore()` แทน
+  แล้วติดดาว (`Readiness 89*`) ให้รู้ว่าไม่ใช่เลขจริง
+
+**ค่าประมาณสูงกว่าของจริงพอสมควร** — ข้อมูลจริงของแฟน 24 ส.ค. ประมาณได้ 89 แต่ Fitbit บอก 74
+ถ้าอยากได้แม่น ให้พิมพ์ `คะแนนนอน 74` ในแชท (เก็บลงตาราง `sleep_scores` รายวัน) แล้วสูตรจะใช้ค่าจริง
+
 ### Webhook
 
 มี — `projects.subscribers.subscriptions` ใน API เดียวกัน ยังไม่ต้องใช้รอบแรก ดึงเป็นรอบ ๆ ก่อน

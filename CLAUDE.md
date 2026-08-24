@@ -86,6 +86,10 @@ bash scripts/deploy.sh
   **ทางที่ชัวร์ที่สุดคือตั้งผ่านหน้าเว็บ Cloudflare** ไม่ใช่ command line
   **สรุปการนอน/recovery ดึงสดจากนาฬิกาทุกครั้ง ไม่ได้เก็บใน D1** — คำสั่ง `นอน` ในแชท
   และ `/api/sleep` ที่หน้า `/calories` เอาไปแสดง (ยังไม่มี cron เก็บย้อนหลัง)
+  **Google Health API ไม่มี Sleep score และไม่มี Readiness** (ค้นทั้ง discovery doc แล้ว `readiness` = 0 ครั้ง)
+  Readiness ใช้สูตรที่เจ้าของให้มาใน `readinessScore()` — ตัวแปร `sleep_score` ที่ API ไม่มี
+  จะใช้ `estimateSleepScore()` แทนแล้วติดดาว หรือผู้ใช้พิมพ์ `คะแนนนอน 74` ใส่ค่าจริงได้
+  **อย่ากุตัวเลขให้ดูเท่ากับ WHOOP** — ค่าประมาณสูงกว่าของจริงพอสมควร (89 vs 74)
   ฝั่ง Google ไม่มีคะแนนการนอนกับ recovery ให้ ต้องคำนวณประสิทธิภาพเอง
   และประกอบ recovery จาก `daily-resting-heart-rate` + `daily-heart-rate-variability` คนละ endpoint
   **ฟังก์ชัน sleep/recovery ของ WHOOP ยังไม่ได้ยืนยันกับ response จริง** (ต่างจาก workout ที่ยืนยันแล้ว)

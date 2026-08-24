@@ -1121,6 +1121,10 @@ function sleepBlock(name, data) {
 
   const second = [];
   if (r?.recovery_pct != null) second.push(`Recovery ${r.recovery_pct}%`);
+  // ดาวหมายถึงคะแนนการนอนที่ป้อนให้สูตรเป็นค่าประมาณ ไม่ใช่ของ Fitbit จริง
+  else if (r?.readiness != null) {
+    second.push(`Readiness ${r.readiness}${r.readiness_inputs?.sleep_score_estimated ? "*" : ""}`);
+  }
   if (r?.resting_hr != null) second.push(`หัวใจขณะพัก ${r.resting_hr}`);
   if (r?.hrv_ms != null) second.push(`HRV ${r.hrv_ms} ms`);
   if (second.length) out.push(second.join(" · "));
@@ -1148,8 +1152,28 @@ async function replySleep(env, event, chatId, userId) {
     return lineReply(env, event.replyToken,
       "ยังดึงข้อมูลการนอนไม่ได้ครับ 😴 ลองซิงก์แอปนาฬิกาก่อนแล้วพิมพ์ใหม่อีกครั้ง");
   }
+  const anyEstimated = results.some((x) => x.data?.recovery?.readiness_inputs?.sleep_score_estimated
+    && x.data.recovery.readiness != null);
+  const foot = anyEstimated
+    ? ["", "* Readiness คำนวณจากคะแนนการนอนโดยประมาณ (API ของ Fitbit ไม่มีคะแนนให้ดึง)",
+       '  บอกคะแนนจริงจากแอปได้ด้วยการพิมพ์ "คะแนนนอน 74"']
+    : [];
   return lineReply(env, event.replyToken,
-    ["สรุปการนอนคืนล่าสุด 😴", "", blocks.join("\n\n\n")].join("\n"));
+    ["สรุปการนอนคืนล่าสุด 😴", "", blocks.join("\n\n\n"), ...foot].join("\n"));
+}
+
+// ผู้ใช้บอกคะแนนการนอนจริงจากแอปเอง เพื่อให้ Readiness แม่นขึ้น
+async function replySetSleepScore(env, event, userId, score) {
+  if (score < 0 || score > 100) {
+    return lineReply(env, event.replyToken, "คะแนนการนอนต้องอยู่ระหว่าง 0-100 ครับ");
+  }
+  const today = bkkToday();
+  await W.setSleepScore(env, userId, today, score);
+  return lineReply(env, event.replyToken, [
+    `บันทึกคะแนนการนอนวันนี้ ${score} แล้วครับ 😴`,
+    "",
+    'พิมพ์ "นอน" อีกครั้งเพื่อดู Readiness ที่คำนวณจากคะแนนจริง',
+  ].join("\n"));
 }
 
 // คำสั่งกลุ่มนี้ใช้ได้ทั้งสองโหมด (ทั้งกลุ่มแคลอรี่และกลุ่มชาเลนจ์)
@@ -1163,8 +1187,12 @@ async function handleWearableCommand(env, event, userId, chatId, text) {
   if (/^(ตัดการเชื่อมต่อ|ยกเลิกนาฬิกา|เลิกเชื่อมนาฬิกา|disconnect)$/i.test(text)) {
     return { handled: true, promise: replyDisconnect(env, event, userId) };
   }
-  if (/^(นอน|การนอน|เมื่อคืนนอน|sleep|recovery)$/i.test(text)) {
+  if (/^(นอน|การนอน|เมื่อคืนนอน|sleep|recovery|readiness)$/i.test(text)) {
     return { handled: true, promise: replySleep(env, event, chatId, userId) };
+  }
+  const scoreMatch = text.match(/^(?:คะแนนนอน|คะแนนการนอน|sleep\s*score)\s*(\d{1,3})$/i);
+  if (scoreMatch) {
+    return { handled: true, promise: replySetSleepScore(env, event, userId, parseInt(scoreMatch[1], 10)) };
   }
   return { handled: false };
 }

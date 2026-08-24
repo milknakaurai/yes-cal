@@ -99,6 +99,11 @@ export async function ensureWearableTables(env) {
        expires_at TEXT, scope TEXT, provider_user_id TEXT, display_name TEXT,
        connected_at TEXT DEFAULT (datetime('now')), updated_at TEXT,
        PRIMARY KEY (line_user_id, provider))`,
+    // คะแนนการนอนที่ผู้ใช้กรอกเอง — API ไม่มีให้ดึง แต่สูตร readiness ต้องใช้
+    `CREATE TABLE IF NOT EXISTS sleep_scores (
+       line_user_id TEXT NOT NULL, date TEXT NOT NULL, score INTEGER NOT NULL,
+       created_at TEXT DEFAULT (datetime('now')),
+       PRIMARY KEY (line_user_id, date))`,
   ];
   for (const sql of stmts) await env.DB.prepare(sql).run();
   tablesReady = true;
@@ -515,6 +520,87 @@ export function normalizeGoogleRecovery(rhrBody, hrvBody) {
   };
 }
 
+// ---------------------------------------------------------------- Readiness (ฝั่ง Fitbit)
+//
+// Google Health API ไม่มี Readiness ให้ดึง (คำนี้ไม่ปรากฏใน discovery document เลย)
+// เจ้าของจึงให้สูตรคำนวณมาเอง — ส่วนนี้คือสูตรนั้นแบบตรงตัว
+//
+// ⚠️ ตัวแปร sleep_score ในสูตรใช้ "ค่าจาก API" ไม่ได้ เพราะ API ไม่มีคะแนนการนอนเช่นกัน
+//    ถ้าไม่มีคะแนนจริงส่งเข้ามา จะใช้ค่าประมาณจาก estimateSleepScore() แทน
+//    และตั้งธง sleep_score_estimated ไว้ให้รู้ว่าเลขนี้ไม่ใช่ของ Fitbit จริง
+export function readinessScore({ todayHrv, baselineHrv, sleepScore, prevDayAzm }) {
+  if (todayHrv == null || !baselineHrv || sleepScore == null) return null;
+
+  const hrvRatio = todayHrv / baselineHrv;
+  const hrvComp = hrvRatio >= 1.0
+    ? Math.min(100, 85 + (hrvRatio - 1.0) * 50)
+    : Math.max(0, 85 - (1.0 - hrvRatio) * 120);
+
+  const sleepComp = sleepScore;
+
+  const azm = prevDayAzm ?? 0;
+  const activityComp = azm <= 40 ? 100 : Math.max(40, 100 - (azm - 40) * 0.8);
+
+  return Math.round(hrvComp * 0.45 + sleepComp * 0.35 + activityComp * 0.20);
+}
+
+// ค่าประมาณคะแนนการนอน ใช้เฉพาะตอนไม่มีคะแนนจริง
+// อิงสัดส่วนที่ Fitbit ใช้: ระยะเวลา 50% · คุณภาพ (หลับลึก+REM) 25% · ความต่อเนื่อง 25%
+// **ไม่ใช่ Sleep score ของ Fitbit** ตัวเลขจะสูงกว่าของจริงอยู่พอสมควร
+export function estimateSleepScore(sleep) {
+  if (!sleep?.asleep_min) return null;
+  const duration = Math.min(100, (sleep.asleep_min / 480) * 100);
+  const restorative = (sleep.deep_min || 0) + (sleep.rem_min || 0);
+  const quality = restorative
+    ? Math.min(100, (restorative / sleep.asleep_min / 0.4) * 100)
+    : duration;
+  const continuity = sleep.efficiency_pct ?? 90;
+  return Math.round(duration * 0.5 + quality * 0.25 + continuity * 0.25);
+}
+
+// HRV วันนี้ + ค่าฐานจากวันก่อน ๆ (ไม่รวมวันนี้ ไม่งั้นค่าฐานจะวิ่งตามตัวเอง)
+export function hrvSeries(body) {
+  const days = (body?.dataPoints || [])
+    .filter((d) => d.dailyHeartRateVariability?.averageHeartRateVariabilityMilliseconds != null)
+    .map((d) => d.dailyHeartRateVariability.averageHeartRateVariabilityMilliseconds);
+  if (!days.length) return { today: null, baseline: null, days: 0 };
+  const rest = days.slice(1);
+  const baseline = rest.length
+    ? rest.reduce((a, b) => a + b, 0) / rest.length
+    : days[0];
+  return { today: days[0], baseline, days: days.length };
+}
+
+// รวม active zone minutes ของ "เมื่อวาน" — ข้อมูลมาเป็นช่วง ๆ ต้องบวกเอง
+export function azmForDate(body, date) {
+  const points = (body?.dataPoints || []).filter((d) => d.activeZoneMinutes);
+  let total = 0;
+  let found = false;
+  for (const d of points) {
+    const start = d.activeZoneMinutes.interval?.startTime;
+    if (!start || bkkDateOf(start) !== date) continue;
+    found = true;
+    total += num(d.activeZoneMinutes.activeZoneMinutes) || 0;
+  }
+  return found ? Math.round(total) : null;
+}
+
+export async function setSleepScore(env, lineUserId, date, score) {
+  await ensureWearableTables(env);
+  await env.DB.prepare(
+    `INSERT INTO sleep_scores (line_user_id, date, score) VALUES (?, ?, ?)
+     ON CONFLICT(line_user_id, date) DO UPDATE SET score = excluded.score`
+  ).bind(lineUserId, date, score).run();
+}
+
+export async function getSleepScore(env, lineUserId, date) {
+  await ensureWearableTables(env);
+  const row = await env.DB.prepare(
+    `SELECT score FROM sleep_scores WHERE line_user_id = ? AND date = ?`
+  ).bind(lineUserId, date).first();
+  return row?.score ?? null;
+}
+
 // ดึงการนอน + recovery ของคืนล่าสุดของคนคนเดียว
 // คืน null ถ้ายังไม่ได้เชื่อมนาฬิกา · ฟิลด์ไหนดึงไม่ได้ก็เป็น null ไม่ให้ทั้งก้อนพัง
 export async function getNightSummary(env, lineUserId) {
@@ -548,13 +634,40 @@ export async function getNightSummary(env, lineUserId) {
       recovery: recBody ? normalizeWhoopRecovery(recBody) : null,
     };
   }
-  const [sleepBody, rhrBody, hrvBody] = await Promise.all([get("sleep"), get("recovery"), get("hrv")]);
-  return {
-    provider,
-    sleep: sleepBody ? normalizeGoogleSleep(sleepBody) : null,
-    recovery: normalizeGoogleRecovery(rhrBody, hrvBody),
+  const [sleepBody, rhrBody, hrvBody, azmBody] = await Promise.all([
+    get("sleep"), get("recovery"), get("hrv"), get("azm"),
+  ]);
+  const sleep = sleepBody ? normalizeGoogleSleep(sleepBody) : null;
+  const recovery = normalizeGoogleRecovery(rhrBody, hrvBody) || {
+    provider: "google", recovery_pct: null, resting_hr: null, hrv_ms: null, scored: true,
   };
+
+  // Fitbit ไม่มี Readiness ให้ดึง — คำนวณตามสูตรที่เจ้าของกำหนด
+  const hrv = hrvSeries(hrvBody);
+  const yesterday = bkkDateOffsetLocal(-1);
+  const azm = azmForDate(azmBody, yesterday);
+
+  // คะแนนการนอนจริงที่ผู้ใช้กรอกไว้มาก่อนค่าประมาณเสมอ
+  const real = sleep?.date ? await getSleepScore(env, lineUserId, sleep.date) : null;
+  const sleepScore = real ?? estimateSleepScore(sleep);
+
+  recovery.readiness = readinessScore({
+    todayHrv: hrv.today, baselineHrv: hrv.baseline, sleepScore, prevDayAzm: azm,
+  });
+  recovery.readiness_inputs = {
+    hrv_today: hrv.today != null ? Math.round(hrv.today * 10) / 10 : null,
+    hrv_baseline: hrv.baseline != null ? Math.round(hrv.baseline * 10) / 10 : null,
+    hrv_days: hrv.days,
+    sleep_score: sleepScore,
+    sleep_score_estimated: real == null,
+    prev_day_azm: azm,
+  };
+  if (sleep) sleep.score_for_readiness = sleepScore;
+  return { provider, sleep, recovery };
 }
+
+const bkkDateOffsetLocal = (n) =>
+  new Date(Date.now() + 7 * 3600 * 1000 + n * 86400 * 1000).toISOString().slice(0, 10);
 
 // ---------------------------------------------------------------- เกณฑ์เช็คอินอัตโนมัติ
 //
@@ -611,7 +724,8 @@ export const DATA_URLS = {
     sleep: "https://health.googleapis.com/v4/users/me/dataTypes/sleep/dataPoints?pageSize=5",
     recovery:
       "https://health.googleapis.com/v4/users/me/dataTypes/daily-resting-heart-rate/dataPoints?pageSize=5",
-    hrv: "https://health.googleapis.com/v4/users/me/dataTypes/daily-heart-rate-variability/dataPoints?pageSize=5",
+    hrv: "https://health.googleapis.com/v4/users/me/dataTypes/daily-heart-rate-variability/dataPoints?pageSize=30",
+    azm: "https://health.googleapis.com/v4/users/me/dataTypes/active-zone-minutes/dataPoints?pageSize=300",
   },
 };
 
