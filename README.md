@@ -169,11 +169,22 @@ npm run deploy
 
 ## Deploy อัตโนมัติ
 
-`.github/workflows/deploy.yml` — ทุก push ขึ้น branch นี้จะรันชุดทดสอบก่อน แล้ว deploy ให้เองถ้าผ่าน
-ต้องตั้ง repository secret **`CLOUDFLARE_API_TOKEN`** ครั้งเดียวที่
-GitHub → repo → Settings → Secrets and variables → Actions → New repository secret
+เลือกทางเดียวพอ:
+
+**ทาง A (แนะนำ) — Cloudflare Workers Builds** ตั้งจากหน้าเว็บ Cloudflare ล้วน ๆ ไม่ต้องแตะ GitHub:
+1. dash.cloudflare.com → Workers & Pages → **yes-cal** → **Settings** → **Builds** → **Connect**
+2. เชื่อมบัญชี GitHub → เลือก repo `milknakaurai/yes-cal`
+3. Build command: `npm install && node scripts/e2e-test.mjs` (เทสไม่ผ่าน = ไม่ deploy)
+   Deploy command: ปล่อยค่าเริ่มต้น `npx wrangler deploy`
+4. **Settings → Build → Branch control** เปลี่ยน production branch เป็น `claude/line-calorie-tracker-jmgcyz`
+
+**ทาง B — GitHub Actions** ตั้ง repository secret **`CLOUDFLARE_API_TOKEN`** ที่
+GitHub → repo → Settings → Secrets and variables → Actions → แท็บ **Secrets** → New repository secret
+(`.github/workflows/deploy.yml` จะเทสแล้ว deploy ให้เอง · ถ้าไม่ตั้ง secret ไฟล์นี้จะรันเทสอย่างเดียว
+แล้วข้ามขั้น deploy แบบไม่ถือว่าพัง เพื่อให้อยู่ร่วมกับทาง A ได้)
 
 deploy เองจากเครื่องด้วย `npx wrangler deploy` ก็ยังทำได้ตามปกติ
+มี `.nvmrc` กำหนด Node 22 ไว้ เพราะชุดทดสอบใช้ `node:sqlite` (Node < 22.5 รันไม่ได้)
 
 ## ทดสอบก่อน deploy
 

@@ -15,7 +15,10 @@ LINE bot 2 โหมดในตัวเดียว รันบน Cloudflare
 
 ## วิธี deploy
 
-**ปกติไม่ต้อง deploy เอง** — `.github/workflows/deploy.yml` deploy ให้อัตโนมัติทุกครั้งที่ push
+**ปกติไม่ต้อง deploy เอง** — auto deploy มีสองทาง ดูหัวข้อ "Deploy อัตโนมัติ" ใน README:
+ทาง A = Cloudflare Workers Builds (เชื่อม repo ในหน้าเว็บ Cloudflare — แนะนำ เพราะเจ้าของตั้ง
+secret ผ่าน command line แล้วค่าเพี้ยนมาสองรอบ) · ทาง B = GitHub Actions (`deploy.yml`)
+ต้องมี repo secret `CLOUDFLARE_API_TOKEN` ไม่งั้นไฟล์นั้นรันแค่เทสแล้วข้าม deploy (จงใจ ไม่ใช่บั๊ก)
 (รัน `scripts/e2e-test.mjs` ก่อน เทสไม่ผ่านจะไม่ deploy) ต้องมี repo secret `CLOUDFLARE_API_TOKEN`
 
 ### deploy เองด้วยมือ
