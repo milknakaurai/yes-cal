@@ -117,6 +117,14 @@ const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyV
 const fmt = (n) => Math.round(n).toLocaleString("en-US");
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+// เปิดด้วยลิงก์ ?key=... ได้เลย ไม่ต้องพิมพ์ (เก็บลง localStorage แล้วลบออกจาก URL กันหลุด)
+function keyFromUrl() {
+  const k = new URLSearchParams(location.search).get("key");
+  if (!k) return;
+  localStorage.setItem("yescal_key", k);
+  history.replaceState(null, "", location.pathname);
+}
+
 async function load() {
   const key = localStorage.getItem("yescal_key") || "";
   const res = await fetch("/api/overview?days=14" + (key ? "&key=" + encodeURIComponent(key) : ""));
@@ -126,19 +134,25 @@ async function load() {
 }
 
 function renderKeyPrompt() {
+  // ต้องเป็น <form> จริง ๆ มือถือถึงจะขึ้นปุ่ม Go บนคีย์บอร์ด และตัวจำรหัสผ่านถึงจะทำงาน
   $app.innerHTML = `
     <div id="keybox">
       <h1>Yes Cal 🔒</h1>
       <p class="date" style="margin-top:8px">ใส่รหัสผ่านหน้าเว็บ (DASHBOARD_KEY)</p>
-      <input type="password" id="keyinput" autofocus>
-      <br><button id="keybtn">เข้าดู</button>
+      <form id="keyform">
+        <input type="password" id="keyinput" name="password" autocomplete="current-password"
+               autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go">
+        <br><button type="submit" id="keybtn">เข้าดู</button>
+      </form>
     </div>`;
-  const go = () => {
-    localStorage.setItem("yescal_key", document.getElementById("keyinput").value);
+  const input = document.getElementById("keyinput");
+  document.getElementById("keyform").onsubmit = (e) => {
+    e.preventDefault();
+    localStorage.setItem("yescal_key", input.value.trim());
     load();
   };
-  document.getElementById("keybtn").onclick = go;
-  document.getElementById("keyinput").onkeydown = (e) => e.key === "Enter" && go();
+  // autofocus ไม่ทำงานกับ element ที่เพิ่งใส่ด้วย innerHTML — ต้องสั่ง focus เอง
+  input.focus();
 }
 
 function render() {
@@ -361,6 +375,7 @@ addEventListener("resize", () => {
   resizeTimer = setTimeout(() => DATA && drawCharts(), 150);
 });
 
+keyFromUrl();
 load();
 </script>
 </body>
