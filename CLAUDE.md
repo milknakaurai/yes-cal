@@ -78,6 +78,12 @@ bash scripts/deploy.sh
   2. WHOOP บังคับ `state` ยาว >= 8 ตัวอักษร (เราใช้ 32)
   3. Google ต้องมี `access_type=offline` + `prompt=consent` ไม่งั้นการยินยอมครั้งที่ 2 เป็นต้นไปจะไม่คืน refresh_token
      — `saveTokens` เลยต้องไม่ทับ refresh_token เดิมด้วย null
+  **ตั้ง secret บน Windows ระวังค่าเพี้ยน** — เคยเจอจริง 24 ส.ค.: `WHOOP_CLIENT_ID` กลายเป็น `\u0016`
+  (กด Ctrl+V ในหน้าต่างที่ซ่อนตัวอักษร Command Prompt รับเป็นอักขระควบคุมแทนการวาง)
+  และ `GOOGLE_CLIENT_ID` กลายเป็นภาษาไทย (แป้นพิมพ์ค้างโหมดไทย)
+  `configProblem()` จับสองอาการนี้แล้ว และ `/api/health` โชว์ `client_id` เต็ม ๆ ให้เทียบได้
+  (client_id ไม่ใช่ความลับ ส่วน secret โชว์แค่ความยาว มีเทสคุมว่าห้ามหลุด)
+  **ทางที่ชัวร์ที่สุดคือตั้งผ่านหน้าเว็บ Cloudflare** ไม่ใช่ command line
 - `docs/wearables.md` — สเปกการเชื่อม Whoop + Fitbit
   **Fitbit API เดิมตาย ก.ย. 2026** ต้องใช้ Google Health API v4 เท่านั้น
   **Google Health API อ่านข้อมูล Whoop ไม่ได้** — Whoop เข้า Health Connect ซึ่งเป็นที่เก็บบนเครื่อง ไม่มี cloud API

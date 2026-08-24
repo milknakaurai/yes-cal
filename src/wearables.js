@@ -367,6 +367,7 @@ export function providerDiagnostics(env, provider) {
   const secret = trim(env, p.clientSecretVar);
   return {
     ready: providerReady(env, provider),
+    problem: configProblem(env, provider),
     client_id: id || null,
     client_id_length: id.length,
     // ตั้งผ่าน echo บน Windows แล้วมี \r หรือช่องว่างติดมาบ่อย
@@ -376,5 +377,26 @@ export function providerDiagnostics(env, provider) {
     // สลับค่ากันบ่อย — UUID ในช่อง secret แปลว่าน่าจะใส่สลับ
     client_secret_looks_like_uuid:
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(secret),
+    // วางในหน้าต่าง Command Prompt ที่ซ่อนตัวอักษร แล้ว Ctrl+V กลายเป็นอักขระควบคุม
+    // หรือแป้นพิมพ์ค้างโหมดไทย แล้วได้ตัวอักษรไทยแทน — เจอมาแล้วทั้งสองแบบ
+    client_id_has_bad_chars: hasBadChars(id),
+    client_secret_has_bad_chars: hasBadChars(secret),
   };
+}
+
+// client id/secret ของทั้งสองเจ้าเป็น ASCII ที่พิมพ์ได้ล้วน อะไรนอกเหนือจากนี้คือพิมพ์/วางพลาด
+const hasBadChars = (v) => Boolean(v) && /[^\x20-\x7E]/.test(v);
+
+// คืนข้อความอธิบายถ้าค่าที่ตั้งไว้ดูผิดตั้งแต่ต้น จะได้บอกผู้ใช้ก่อนส่งไปให้ผู้ให้บริการปฏิเสธ
+export function configProblem(env, provider) {
+  const p = PROVIDERS[provider];
+  const id = trim(env, p.clientIdVar);
+  const secret = trim(env, p.clientSecretVar);
+  if (!id || !secret) return `ยังไม่ได้ตั้ง ${p.clientIdVar} หรือ ${p.clientSecretVar}`;
+  if (hasBadChars(id) || hasBadChars(secret)) {
+    return `ค่าที่ตั้งไว้มีอักขระแปลกปลอม (วางไม่ติดใน Command Prompt หรือแป้นพิมพ์ค้างโหมดไทย) — ตั้ง ${p.clientIdVar} และ ${p.clientSecretVar} ใหม่`;
+  }
+  if (id.length < 8) return `${p.clientIdVar} สั้นผิดปกติ (${id.length} ตัวอักษร) น่าจะวางไม่ครบ`;
+  if (secret.length < 16) return `${p.clientSecretVar} สั้นผิดปกติ (${secret.length} ตัวอักษร) น่าจะวางไม่ครบ`;
+  return null;
 }

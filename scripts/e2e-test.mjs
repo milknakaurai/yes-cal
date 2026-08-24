@@ -34,8 +34,11 @@ const env = {
   GEMINI_API_KEY: 'key',
   DASHBOARD_KEY: 'dash',
   TOKEN_KEY: 'a-very-secret-key-for-tests-0123456789',
-  WHOOP_CLIENT_ID: 'whoop-id', WHOOP_CLIENT_SECRET: 'whoop-secret',
-  GOOGLE_CLIENT_ID: 'google-id', GOOGLE_CLIENT_SECRET: 'google-secret',
+  // ความยาวใกล้เคียงของจริง เพราะ configProblem() ตีตกค่าที่สั้นผิดปกติ
+  WHOOP_CLIENT_ID: '0c03ac1e-3bfa-4da0-8a1a-66608ff1a9bf',
+  WHOOP_CLIENT_SECRET: 'w'.repeat(64),
+  GOOGLE_CLIENT_ID: '1234567890-abcdef.apps.googleusercontent.com',
+  GOOGLE_CLIENT_SECRET: 'GOCSPX-' + 'g'.repeat(28),
   ASSETS: { fetch: async (u) => new Response('<!DOCTYPE html>' + String(u), { status: 200 }) },
 };
 
@@ -369,7 +372,7 @@ check('redirect_uri ตรงกับที่ลงทะเบียนไว
 const cbRes = await worker.fetch(new Request(`https://x/oauth/whoop/callback?code=CODE1&state=${st}`), env, ctx);
 check('callback สำเร็จ', cbRes.status === 200 && (await cbRes.text()).includes('สำเร็จ'));
 check('แลกโทเคนด้วย grant_type ถูกต้อง', (lastTokenRequest?.body || '').includes('grant_type=authorization_code'));
-check('ส่ง client_secret ไปด้วย', (lastTokenRequest?.body || '').includes('client_secret=whoop-secret'));
+check('ส่ง client_secret ไปด้วย', (lastTokenRequest?.body || '').includes('client_secret=' + 'w'.repeat(64)));
 
 const stored = db.prepare(`SELECT access_token, refresh_token, provider_user_id, display_name FROM device_links WHERE line_user_id='U_DM'`).get();
 check('เก็บลง device_links แล้ว', !!stored);
@@ -432,10 +435,20 @@ check('provider มั่ว → ตอบ error ไม่ throw', !!peekBad.err
 const health = await api('/api/health?key=dash');
 console.log('  wearables ใน /api/health:', JSON.stringify(health.wearables));
 check('/api/health บอกว่าตั้งค่าครบแล้ว', health.wearables.whoop.ready && health.wearables.google.ready);
-check('health โชว์ client_id ให้เทียบได้', health.wearables.whoop.client_id === 'whoop-id');
+check('health โชว์ client_id ให้เทียบได้', health.wearables.whoop.client_id === env.WHOOP_CLIENT_ID);
+check('health บอกว่าไม่มีปัญหาการตั้งค่า', health.wearables.whoop.problem === null);
 check('health ไม่หลุด client_secret ออกมา',
-  !JSON.stringify(health).includes('whoop-secret') && !JSON.stringify(health).includes('google-secret'));
-check('health บอกความยาว client_secret แทน', health.wearables.whoop.client_secret_length === 'whoop-secret'.length);
+  !JSON.stringify(health).includes(env.WHOOP_CLIENT_SECRET) && !JSON.stringify(health).includes(env.GOOGLE_CLIENT_SECRET));
+check('health บอกความยาว client_secret แทน', health.wearables.whoop.client_secret_length === 64);
+
+// ค่าที่วางพลาดต้องถูกจับได้ก่อนส่งไปให้ผู้ให้บริการปฏิเสธ
+const brokenEnv = { ...env, WHOOP_CLIENT_ID: '\u0016', WHOOP_CLIENT_SECRET: 'xxxxxxxxxxxx' };
+const linkB = (await send(dmEvent('U_DM', 'เชื่อมนาฬิกา')))[0].match(/connect\?t=([a-f0-9]+)/)[1];
+const blocked = await worker.fetch(new Request(`https://x/oauth/whoop/start?t=${linkB}`), brokenEnv, ctx);
+const blockedText = await blocked.text();
+check('client_id เพี้ยน → หยุดเองพร้อมบอกเหตุผล',
+  blocked.status === 400 && blockedText.includes('อักขระแปลกปลอม'));
+check('ไม่ปล่อยให้เด้งไปเจอหน้า error ของผู้ให้บริการ', blocked.status !== 302);
 
 console.log('\n--- หน้าเว็บสาธารณะ ---');
 for (const [path, file] of [['/workout', 'workout.html'], ['/calories', 'calories.html'], ['/connect', 'connect.html'],

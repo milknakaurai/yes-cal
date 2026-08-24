@@ -941,9 +941,11 @@ async function getDayTotals(env, userId, date) {
 // ---------------------------------------------------------------- OAuth เชื่อมนาฬิกา
 
 async function handleOAuth(url, env, provider, step) {
-  if (!W.providerReady(env, provider)) {
-    return oauthPage("ยังตั้งค่าไม่ครบ",
-      `ผู้ดูแลยังไม่ได้ตั้ง client id/secret ของ ${W.PROVIDERS[provider].label} หรือ TOKEN_KEY บน Worker`, false);
+  const problem = W.configProblem(env, provider);
+  if (problem || !W.providerReady(env, provider)) {
+    return oauthPage(`ตั้งค่า ${W.PROVIDERS[provider].label} ยังไม่ถูกต้อง`,
+      problem || `ผู้ดูแลยังไม่ได้ตั้ง client id/secret ของ ${W.PROVIDERS[provider].label} หรือ TOKEN_KEY บน Worker`,
+      false);
   }
 
   if (step === "start") {
