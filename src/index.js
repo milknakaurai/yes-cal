@@ -1,7 +1,7 @@
 // Yes Cal — LINE calorie tracker bot for two people
 // Cloudflare Worker: LINE webhook + Gemini calorie estimation + D1 + dashboard API + nightly cron
 
-import { NUTRITION_HINTS } from "./food-reference.js";
+import { NUTRITION_HINTS, SUGGEST_POOL } from "./food-reference.js";
 import * as J from "./jokes.js";
 
 const LINE_API = "https://api.line.me/v2/bot";
@@ -168,6 +168,8 @@ async function handleTextMessage(event, env, userId) {
   if (/^เป้าหมาย$/.test(text)) return replyGoal(env, event, user);
   const proteinGoalMatch = text.match(/^เป้าโปรตีน\s*(\d+)?\s*(?:g|กรัม)?$/i);
   if (proteinGoalMatch) return setProteinTarget(env, event, user, parseInt(proteinGoalMatch[1] || "0", 10));
+  const suggest = text.match(/^(?:กินอะไรดี|กินไรดี|กินอะไรดีวันนี้|กินไรดีวันนี้|แนะนำเมนู|แนะนำอาหาร|เมนูแนะนำ)(?:\s+(.*))?$/);
+  if (suggest) return replySuggestion(env, event, user, (suggest[1] || "").trim());
   if (/^สรุป$/.test(text)) return replyTodaySummary(env, event);
   if (/^(สัปดาห์|รายสัปดาห์)$/.test(text)) return replyWeekSummary(env, event);
   if (/^(ลบล่าสุด|ลบ)$/.test(text)) return deleteLastMeal(env, event, user);
@@ -204,6 +206,8 @@ function helpText() {
     "🎯 ตั้งเป้า — คำนวณแคลเป้าหมายรายวัน",
     "💪 เป้าโปรตีน 140 — ตั้งเป้าโปรตีนเอง (ปกติคำนวณให้จากน้ำหนัก)",
     "⚖️ น้ำหนัก 65.5 — บันทึกน้ำหนักวันนี้",
+    "🍜 กินอะไรดี — แนะนำเมนูให้พอดีกับที่เหลือของวันนี้",
+    "     ใส่เงื่อนไขต่อท้ายได้ เช่น \"กินอะไรดี ร้านตามสั่ง\"",
     "📊 สรุป — ยอดวันนี้ของทั้งคู่",
     "📅 สัปดาห์ — ย้อนหลัง 7 วัน",
     "🗑️ ลบล่าสุด — ลบรายการอาหารล่าสุดของวันนี้",
@@ -437,6 +441,148 @@ function proteinTarget(user) {
   if (!user.weight_kg || !user.target_kcal) return null;
   const perKg = GOALS[user.goal_type]?.proteinPerKg ?? 1.4;
   return Math.round((user.weight_kg * perKg) / 5) * 5;
+}
+
+// ---------------------------------------------------------------- แนะนำเมนู ("กินอะไรดี")
+
+const SUGGEST_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    options: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          name: { type: "STRING", description: "ชื่อเมนูภาษาไทย พร้อมปริมาณ เช่น อกไก่ย่าง 150g + ข้าวสวย 1 ทัพพี" },
+          kcal: { type: "NUMBER" },
+          protein_g: { type: "NUMBER" },
+          why: { type: "STRING", description: "เหตุผลสั้น ๆ ไม่เกิน 12 คำ ว่าทำไมเมนูนี้เหมาะกับที่เหลือวันนี้" },
+        },
+        required: ["name", "kcal", "protein_g"],
+      },
+    },
+    tip: { type: "STRING", description: "คำแนะนำปิดท้ายสั้น ๆ ไม่เกิน 15 คำ (ไม่ใส่ก็ได้)" },
+  },
+  required: ["options"],
+};
+
+// ชั่วโมงเวลาไทย ใช้เดาว่าตอนนี้ควรแนะนำมื้อไหน
+function bkkHour() {
+  return new Date(Date.now() + 7 * 3600 * 1000).getUTCHours();
+}
+
+function mealSlot() {
+  const h = bkkHour();
+  if (h < 10) return "เช้า";
+  if (h < 14) return "กลางวัน";
+  if (h < 17) return "ว่าง";
+  return "เย็น";
+}
+
+const SLOT_LABEL = { "เช้า": "มื้อเช้า", "กลางวัน": "มื้อกลางวัน", "ว่าง": "ของว่างบ่าย", "เย็น": "มื้อเย็น" };
+
+async function replySuggestion(env, event, user, hint) {
+  const today = bkkToday();
+  const eaten = await getDayTotals(env, user.line_user_id, today);
+  const pTarget = proteinTarget(user);
+  const kcalLeft = user.target_kcal ? Math.round(user.target_kcal - eaten.kcal) : null;
+  const proteinLeft = pTarget ? Math.round(pTarget - eaten.protein_g) : null;
+  const slot = mealSlot();
+
+  const mealsToday = (await env.DB.prepare(
+    "SELECT name FROM meals WHERE line_user_id = ? AND eaten_date = ? ORDER BY id"
+  ).bind(user.line_user_id, today).all()).results.map((m) => m.name);
+
+  const result = await geminiJson(env, [{ text: suggestPrompt({
+    name: user.display_name, goal: user.goal_type, slot, hint, mealsToday, kcalLeft, proteinLeft,
+  }) }], SUGGEST_SCHEMA);
+
+  // Gemini ใช้ไม่ได้ (โควตาหมด/ต่อไม่ติด) → เลือกจากคลังเมนูเองแทน ยังตอบได้เหมือนเดิม
+  const options = result?.options?.length
+    ? result.options.slice(0, 3)
+    : pickFromPool(slot, kcalLeft, proteinLeft, mealsToday);
+
+  return lineReply(env, event.replyToken, suggestionText({
+    name: user.display_name, slot, kcalLeft, proteinLeft, options,
+    tip: result?.options?.length ? result.tip : null,
+    offline: !result?.options?.length,
+  }));
+}
+
+function suggestPrompt({ name, goal, slot, hint, mealsToday, kcalLeft, proteinLeft }) {
+  const budget = kcalLeft === null
+    ? "ยังไม่ได้ตั้งเป้ารายวัน — แนะนำตามหลักโภชนาการทั่วไป เน้นโปรตีนพอเพียง"
+    : `เหลือโควตาวันนี้ ${kcalLeft} kcal และโปรตีนอีก ${proteinLeft} กรัม`;
+  return [
+    `คุณคือผู้ช่วยด้านโภชนาการอาหารไทย ช่วยแนะนำเมนูให้ ${name}`,
+    "",
+    `ตอนนี้เป็นช่วง${SLOT_LABEL[slot]}`,
+    budget,
+    goal ? `เป้าหมายของเขาคือ ${GOALS[goal]?.label || goal}` : "",
+    mealsToday.length ? `วันนี้กินไปแล้ว: ${mealsToday.join(", ")} — อย่าแนะนำซ้ำของเดิม` : "วันนี้ยังไม่ได้กินอะไรเลย",
+    hint ? `เงื่อนไขเพิ่มเติมจากเขา: "${hint}" — ต้องทำตามให้ได้` : "",
+    "",
+    "เลือกมา 3 เมนู เรียงจากที่เหมาะที่สุด กติกา:",
+    kcalLeft !== null && kcalLeft > 0
+      ? `- แต่ละเมนูต้องไม่เกิน ${kcalLeft} kcal`
+      : "- คุมให้อยู่ในระดับ 300-500 kcal ต่อมื้อ",
+    kcalLeft !== null && kcalLeft <= 0
+      ? "- เขากินเกินเป้าไปแล้ววันนี้ ให้เลือกของเบา ๆ โปรตีนสูง ไม่เกิน 200 kcal"
+      : "",
+    proteinLeft !== null && proteinLeft > 0
+      ? `- ให้ความสำคัญกับโปรตีนก่อน ยิ่งใกล้ ${proteinLeft} กรัมยิ่งดี`
+      : "",
+    "- เป็นอาหารไทยที่หาซื้อได้จริงในกรุงเทพ หรือทำเองง่าย ๆ",
+    "- ระบุปริมาณให้ชัดเจนเสมอ (กี่จาน กี่ทัพพี กี่กรัม)",
+    "- ตัวเลข kcal และโปรตีนต้องอิงตารางอ้างอิงด้านล่าง",
+    "",
+    "ตัวอย่างเมนูที่ใช้ได้ (หยิบไปใช้ตรง ๆ หรือดัดแปลงก็ได้):",
+    SUGGEST_POOL.filter((m) => m.slots.includes(slot))
+      .map((m) => `${m.name} = ${m.kcal} kcal, P${m.protein_g}`).join("\n"),
+    "",
+    NUTRITION_HINTS,
+  ].filter(Boolean).join("\n");
+}
+
+// เลือกเองจากคลัง ใช้ตอน Gemini ไม่พร้อม — เรียงตามโปรตีนต่อแคลอรี่ (คุ้มที่สุดก่อน)
+function pickFromPool(slot, kcalLeft, proteinLeft, mealsToday) {
+  const eatenNames = mealsToday.join(" ");
+  const cap = kcalLeft === null ? 600 : kcalLeft > 0 ? kcalLeft : 200;
+  let pool = SUGGEST_POOL.filter(
+    (m) => m.slots.includes(slot) && m.kcal <= cap && !eatenNames.includes(m.name)
+  );
+  // เหลือโควตาน้อยจนไม่มีอะไรผ่าน → ยอมข้ามเรื่องมื้อ เอาที่เบาที่สุดมาให้
+  if (!pool.length) pool = SUGGEST_POOL.filter((m) => m.kcal <= cap);
+  if (!pool.length) pool = [...SUGGEST_POOL].sort((a, b) => a.kcal - b.kcal).slice(0, 3);
+  return [...pool]
+    .sort((a, b) => b.protein_g / b.kcal - a.protein_g / a.kcal)
+    .slice(0, 3);
+}
+
+function suggestionText({ name, slot, kcalLeft, proteinLeft, options, tip, offline }) {
+  const head = [];
+  if (kcalLeft === null) {
+    head.push(`${name} ยังไม่ได้ตั้งเป้า เลยแนะนำแบบกลาง ๆ ไปก่อนนะครับ 🍽️`);
+  } else if (kcalLeft > 0) {
+    const p = proteinLeft > 0 ? ` · โปรตีนอีก ${proteinLeft} ก.` : " · โปรตีนครบแล้ว";
+    head.push(`${name} เหลือวันนี้ ${kcalLeft} แคล${p} 🍽️`);
+  } else {
+    head.push(`${name} วันนี้เกินเป้ามา ${Math.abs(kcalLeft)} แคลแล้ว 😅 เอาแบบเบา ๆ นะ`);
+  }
+  head.push(`${SLOT_LABEL[slot]}ลองพวกนี้ไหม`);
+
+  const lines = options.map((o, i) => {
+    const p = o.protein_g ? ` · โปรตีน ${Math.round(o.protein_g)} ก.` : "";
+    const why = o.why ? `\n   ${o.why}` : "";
+    return `${i + 1}. ${o.name}\n   ${Math.round(o.kcal)} แคล${p}${why}`;
+  });
+
+  const foot = [];
+  if (tip) foot.push(tip);
+  if (offline) foot.push("(ตอนนี้ AI เต็มโควตา เลยเลือกจากคลังเมนูให้ก่อนนะครับ)");
+  foot.push("กินอันไหนแล้วพิมพ์บอกได้เลย เดี๋ยวบันทึกให้");
+
+  return [head.join("\n"), "", lines.join("\n\n"), "", foot.join("\n")].join("\n");
 }
 
 async function deleteLastMeal(env, event, user) {

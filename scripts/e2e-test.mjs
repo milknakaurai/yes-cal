@@ -39,10 +39,17 @@ const env = {
 // ---- ดัก fetch ----
 const replies = [];
 let geminiReply = null;
+let suggestReply = null;
+let lastGeminiPrompt = '';
+let geminiDown = false;
 globalThis.fetch = async (url, opts) => {
   const u = String(url);
   if (u.includes('generativelanguage')) {
-    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(geminiReply) }] } }] }) };
+    if (geminiDown) return { ok: false, status: 429, text: async () => 'quota', json: async () => ({}) };
+    lastGeminiPrompt = String(opts?.body || '');
+    const wantsSuggestion = lastGeminiPrompt.includes('ผู้ช่วยด้านโภชนาการ');
+    const payload = wantsSuggestion && suggestReply ? suggestReply : geminiReply;
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }) };
   }
   if (u.includes('/content')) {
     return { ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: async () => new ArrayBuffer(16) };
@@ -198,6 +205,51 @@ async function api(path) {
 let failed = 0;
 const check = (label, ok) => { console.log(`  ${ok ? 'OK ' : 'พัง'} ${label}`); if (!ok) failed++; };
 
+// ---- แนะนำเมนู "กินอะไรดี" (โหมดแคลอรี่ คุยตัวต่อตัวกับบอท) ----
+const dmEvent = (userId, text) => ({
+  type: 'message', replyToken: 'rt', source: { type: 'user', userId },
+  message: { type: 'text', id: 'm' + (++msgSeq), text },
+});
+CURRENT_NAME = 'Milk';
+db.prepare(`INSERT OR REPLACE INTO users
+  (line_user_id, display_name, sex, age, height_cm, weight_kg, activity, goal_type, target_kcal, target_protein_g)
+  VALUES ('U_DM', 'Milk', 'male', 34, 175, 72, 1.55, 'muscle', 2600, 140)`).run();
+const dmToday = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+db.prepare(`INSERT INTO meals (line_user_id, name, kcal, protein_g, eaten_date)
+  VALUES ('U_DM', 'ข้าวมันไก่ 1 จาน', 600, 24, ?)`).run(dmToday);
+
+suggestReply = { options: [
+  { name: 'อกไก่ย่าง 150g + ข้าวสวย 1 ทัพพี', kcal: 270, protein_g: 44, why: 'โปรตีนแน่น แคลต่ำ' },
+  { name: 'สุกี้น้ำรวมมิตร 1 ชาม', kcal: 290, protein_g: 20, why: 'อิ่มแต่เบา' },
+  { name: 'ลาบไก่ + ข้าวเหนียวครึ่งทัพพี', kcal: 300, protein_g: 23, why: 'โปรตีนดี รสจัด' },
+], tip: 'ดื่มน้ำเยอะ ๆ ด้วยนะครับ' };
+show('Milk (แชทเดี่ยว) พิมพ์ "กินอะไรดี"', await send(dmEvent('U_DM', 'กินอะไรดี')));
+show('Milk พิมพ์ "กินอะไรดี ร้านตามสั่ง" (มีเงื่อนไข)', await send(dmEvent('U_DM', 'กินอะไรดี ร้านตามสั่ง')));
+const hintPrompt = lastGeminiPrompt;
+const suggestOut = replies[0]?.text || '';
+
+geminiDown = true;
+const offline = await send(dmEvent('U_DM', 'กินอะไรดี'));
+show('โควตา Gemini หมด → ต้องเลือกจากคลังเมนูเอง', offline);
+geminiDown = false;
+
+// กินเกินเป้าแล้ว ต้องแนะนำของเบา
+db.prepare(`INSERT INTO meals (line_user_id, name, kcal, protein_g, eaten_date)
+  VALUES ('U_DM', 'หมูกระทะ', 2200, 90, ?)`).run(dmToday);
+suggestReply = { options: [{ name: 'ไข่ต้ม 2 ฟอง', kcal: 145, protein_g: 13, why: 'เบาสุดแล้ว' }] };
+const over = await send(dmEvent('U_DM', 'กินอะไรดี'));
+show('กินเกินเป้าแล้ว', over);
+db.prepare(`DELETE FROM meals WHERE line_user_id = 'U_DM' AND name = 'หมูกระทะ'`).run();
+
+// ยังไม่ได้ตั้งเป้า
+db.prepare(`INSERT OR REPLACE INTO users (line_user_id, display_name) VALUES ('U_NEW', 'Charlie')`).run();
+CURRENT_NAME = 'Charlie';
+suggestReply = { options: [{ name: 'ข้าวมันไก่ต้ม 1 จาน', kcal: 470, protein_g: 25 }] };
+const noGoal = await send(dmEvent('U_NEW', 'กินอะไรดี'));
+show('คนที่ยังไม่ได้ตั้งเป้า', noGoal);
+suggestReply = null;
+CURRENT_NAME = 'Milk';
+
 // ---- กลุ่มที่สอง ไว้พิสูจน์ว่าลิงก์ของแต่ละกลุ่มเห็นแค่ของตัวเอง ----
 CURRENT_NAME = 'Ann';
 await send(textEventIn('G2', 'U_ANN', 'ออกกำลังกาย'));
@@ -232,6 +284,23 @@ console.log(`/api/overview → ${ov.users.length} คน`);
 
 const noKey = await worker.fetch(new Request('https://x/api/challenge'), env, ctx);
 check('ไม่ใส่ key ต้องโดนปฏิเสธ 401', noKey.status === 401);
+
+// ---- แนะนำเมนู ----
+console.log('\n--- แนะนำเมนู ---');
+check('ส่งเงื่อนไขที่ผู้ใช้พิมพ์ต่อท้ายไปให้ AI ด้วย', hintPrompt.includes('ร้านตามสั่ง'));
+check('บอก AI ว่าเหลือโควตาเท่าไหร่', hintPrompt.includes('เหลือโควตาวันนี้ 2000 kcal'));
+check('บอก AI ว่าวันนี้กินอะไรไปแล้ว', hintPrompt.includes('ข้าวมันไก่ 1 จาน'));
+check('แนบตารางโภชนาการไปด้วย', hintPrompt.includes('ตารางอ้างอิงอาหารไทย'));
+check('ไม่มี markdown ในข้อความบอท', !/\*\*|__/.test(suggestOut));
+const nOptions = (t) => (t.match(/^\d+\. /gm) || []).length;
+const nWithKcal = (t) => (t.match(/^ {3}\d+ แคล/gm) || []).length;
+check('เสนอ 3 ตัวเลือก และมีเลขแคลครบทุกอัน',
+  nOptions(suggestOut) === 3 && nWithKcal(suggestOut) === 3);
+check('เกินเป้าแล้วต้องเตือน', over[0].includes('เกินเป้ามา 200 แคล'));
+check('โควตาหมดต้องยังตอบได้', offline[0].includes('แคล') && offline[0].includes('คลังเมนู'));
+check('โควตาหมดแล้วยังเลือกได้ 3 เมนู พร้อมตัวเลข',
+  nOptions(offline[0]) === 3 && nWithKcal(offline[0]) === 3);
+check('คนยังไม่ตั้งเป้าก็ใช้ได้', noGoal[0].includes('ยังไม่ได้ตั้งเป้า'));
 
 // ---- ลิงก์เฉพาะกลุ่ม ----
 console.log('\n--- ลิงก์เฉพาะกลุ่ม ---');
