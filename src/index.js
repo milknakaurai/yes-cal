@@ -1095,9 +1095,19 @@ async function handleApi(url, request, env) {
   // หน้าตรวจสุขภาพระบบ: เช็คว่า secret ครบไหม + ยิงทดสอบ Gemini กับ LINE จริง
   if (url.pathname === "/api/health") {
     const report = {};
+    // ความยาวคร่าว ๆ ของค่าที่ถูกต้อง ไว้จับกรณีวางผิดช่อง (เคยเจอ 24 ส.ค. — เอา Google client id
+    // ไปวางทับ LINE token แล้วบอทเงียบไปทั้งวัน โดยที่ set ยังเป็น true อยู่)
+    const EXPECT = { LINE_CHANNEL_SECRET: 32, LINE_CHANNEL_ACCESS_TOKEN: 150, GEMINI_API_KEY: 30 };
     for (const name of ["LINE_CHANNEL_SECRET", "LINE_CHANNEL_ACCESS_TOKEN", "GEMINI_API_KEY", "DASHBOARD_KEY"]) {
       const raw = env[name] || "";
       report[name] = { set: raw.length > 0, length: raw.length, stray_whitespace: raw !== raw.trim() };
+      const min = EXPECT[name];
+      if (min && raw.trim().length && raw.trim().length < min) {
+        report[name].looks_wrong = `สั้นผิดปกติ ปกติยาวอย่างน้อย ${min} ตัวอักษร — น่าจะวางผิดช่องหรือวางไม่ครบ`;
+      }
+      if (raw && /[^\x20-\x7E]/.test(raw)) {
+        report[name].looks_wrong = "มีอักขระแปลกปลอม (วางไม่ติด หรือแป้นพิมพ์ค้างโหมดไทย)";
+      }
     }
     try {
       const r = await fetch(

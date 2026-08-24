@@ -30,7 +30,7 @@ const SECRET = 'testsecret';
 const env = {
   DB: { prepare: wrap, batch: async (stmts) => { for (const s of stmts) await s.run(); } },
   LINE_CHANNEL_SECRET: SECRET,
-  LINE_CHANNEL_ACCESS_TOKEN: 'token',
+  LINE_CHANNEL_ACCESS_TOKEN: 'token'.padEnd(172, 'x'),
   GEMINI_API_KEY: 'key',
   DASHBOARD_KEY: 'dash',
   TOKEN_KEY: 'a-very-secret-key-for-tests-0123456789',
@@ -435,6 +435,11 @@ check('provider มั่ว → ตอบ error ไม่ throw', !!peekBad.err
 const health = await api('/api/health?key=dash');
 console.log('  wearables ใน /api/health:', JSON.stringify(health.wearables));
 check('/api/health บอกว่าตั้งค่าครบแล้ว', health.wearables.whoop.ready && health.wearables.google.ready);
+check('LINE token ปกติไม่ถูกเตือน', !health.LINE_CHANNEL_ACCESS_TOKEN.looks_wrong);
+const shortLine = await worker.fetch(
+  new Request('https://x/api/health?key=dash'), { ...env, LINE_CHANNEL_ACCESS_TOKEN: 'x'.repeat(73) }, ctx);
+check('LINE token สั้นผิดปกติ → เตือน',
+  String((await shortLine.json()).LINE_CHANNEL_ACCESS_TOKEN.looks_wrong || '').includes('วางผิดช่อง'));
 check('health โชว์ client_id ให้เทียบได้', health.wearables.whoop.client_id === env.WHOOP_CLIENT_ID);
 check('health บอกว่าไม่มีปัญหาการตั้งค่า', health.wearables.whoop.problem === null);
 check('health ไม่หลุด client_secret ออกมา',
