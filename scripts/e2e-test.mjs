@@ -477,6 +477,31 @@ check('ยังไม่ได้คะแนน → ไม่เอาตั�
   pending.kcal === null && pending.strain === null && pending.scored === false);
 check('แต่ยังรู้ว่าทำอะไรกี่นาที', pending.activity === 'เวทเทรนนิ่ง' && pending.duration_min === 41);
 
+// ฝั่ง Google — payload จริงจาก Fitbit (24 ส.ค. 2026)
+const googleBody = JSON.parse(readFileSync(new URL('./fixtures/google-workout.json', import.meta.url), 'utf8'));
+const gws = WN.normalizeGoogleWorkouts(googleBody);
+check('Fitbit: อ่านครบทุกรายการ', gws.length === 5);
+const spin = gws.find((x) => x.activity.includes('สปิน'));
+check('Fitbit: displayName เฉพาะเจาะจงชนะ exerciseType กว้าง ๆ', !!spin && spin.sport === 'workout');
+check('Fitbit: "Workout" กลายเป็นไทย', gws[0].activity === 'ออกกำลังกาย');
+check('Fitbit: "Walk" กลายเป็นไทย', gws[1].activity === 'เดิน');
+check('Fitbit: activeDuration ที่มีทศนิยม (2996.400s) → 50 นาที', gws[1].duration_min === 50);
+check('Fitbit: เวลาทศนิยม 9 ตำแหน่งไม่ทำให้พัง', gws[4].duration_min === 66);
+check('Fitbit: อ่าน recordingMethod ได้',
+  gws[0].actively_started === true && gws[1].actively_started === false);
+check('Fitbit: steps ที่เป็น string แปลงแล้ว', gws[1].steps === 4047);
+check('Fitbit: active zone minutes อ่านได้', gws[3].active_zone_min === 32);
+check('Fitbit: รู้ว่ามาจากอุปกรณ์อะไร', gws[0].device === 'Google Fitbit Air');
+check('Fitbit: ทั้ง 5 รายการนับเป็นเช็คอินได้หมด', gws.every((w) => WN.countsAsCheckin(w).ok));
+
+// กดเริ่มเอง = ตั้งใจ ต้องนับแม้จะสั้น · จับอัตโนมัติและเดินสั้น ๆ ไม่นับ
+check('กดเริ่มเอง แม้สั้นก็นับ',
+  WN.countsAsCheckin({ sport: 'walking', scored: true, duration_min: 8, actively_started: true }).ok === true);
+check('จับอัตโนมัติ เดิน 8 นาที ไม่นับ',
+  WN.countsAsCheckin({ sport: 'walking', scored: true, duration_min: 8, actively_started: false }).ok === false);
+check('จับอัตโนมัติ เดินสั้นแต่หัวใจขึ้นโซนจริง ก็นับ',
+  WN.countsAsCheckin({ sport: 'walking', scored: true, duration_min: 12, actively_started: false, active_zone_min: 16 }).ok === true);
+
 // ฝั่ง Google — ตัวเลขหลายตัวมาเป็น string ต้องแปลงก่อน
 const gw = WN.normalizeGoogleWorkouts({ dataPoints: [{ name: 'users/me/dataTypes/exercise/dataPoints/1', exercise: {
   displayName: 'Morning run', exerciseType: 'RUNNING', activeDuration: '1830s',

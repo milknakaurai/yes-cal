@@ -81,6 +81,20 @@ DataPoint.dailyHeartRateVariability.averageHeartRateVariabilityMilliseconds
 ระวัง: หลายฟิลด์เป็น **string** ไม่ใช่ number (`beatsPerMinute`, `minutesAsleep`,
 `averageHeartRateBeatsPerMinute`, `steps`) ต้อง `Number()` ก่อนใช้
 
+### สิ่งที่เจอจาก response จริง (24 ส.ค. 2026 · fixture: `scripts/fixtures/google-workout.json`)
+
+- **`dataSource.recordingMethod` มีค่ามาก** — `ACTIVELY_MEASURED` = ผู้ใช้กดเริ่มเอง,
+  `PASSIVELY_MEASURED` = นาฬิกาจับให้ ใช้ตัดสินเช็คอินอัตโนมัติได้ตรงกว่าการเดาจากชื่อกีฬา
+  (WHOOP ไม่มีฟิลด์นี้ ต้องใช้ strain แทน)
+- `displayName` บางทีเจาะจงกว่า `exerciseType` (`"Spinning"` ทั้งที่ type เป็น `WORKOUT`)
+  บางทีก็กว้างกว่า (`"Workout"`) — `googleActivityLabel()` เลือกอันที่แปลไทยได้ก่อน
+- `activeDuration` มีทศนิยมได้ เช่น `"2996.400s"`
+- `endTime` มีทศนิยมได้ถึง 9 ตำแหน่ง (`"…14:23:24.696748972Z"`) — `new Date()` รับได้ ตัดให้เหลือ ms เอง
+- `activeZoneMinutes` เป็นตัวชี้ความหนักของฝั่ง Fitbit (เทียบได้กับ strain ของ WHOOP)
+- `startUtcOffset` เป็น `"25200s"` = UTC+7 ตรงกับเวลาไทย
+- ยืนยันแล้วว่า **Fitbit ส่งข้อมูลเข้า Google Health API จริง** (`platform: "FITBIT"`,
+  อุปกรณ์ `"Google Fitbit Air"`) — เส้นทางนี้ใช้ได้
+
 ### Webhook
 
 มี — `projects.subscribers.subscriptions` ใน API เดียวกัน ยังไม่ต้องใช้รอบแรก ดึงเป็นรอบ ๆ ก่อน
@@ -196,7 +210,10 @@ WHOOP จับ "walking" อัตโนมัติแม้แต่ตอน
 **เดิน 40 นาที strain 1.4 หัวใจเฉลี่ย 86** ซึ่งแทบไม่ต่างจากตอนพัก
 ถ้าเช็คอินอัตโนมัติแบบไม่กรอง คนจะได้เครดิตจากการเดินไปเข้าห้องน้ำ
 
-เกณฑ์ที่ใช้ (`countsAsCheckin` ใน `src/wearables.js`): กีฬาอื่นนับหมด ส่วน `walking` ต้อง strain ≥ 4.0
+เกณฑ์ที่ใช้ (`countsAsCheckin` ใน `src/wearables.js`) ตามลำดับ:
+1. `actively_started === true` (กดเริ่มเอง) → นับเลย ไม่ต้องดูอย่างอื่น
+2. ไม่ใช่การเดิน → นับ
+3. เป็นการเดินที่นาฬิกาจับเอง → WHOOP ต้อง strain ≥ 4.0 · Fitbit ต้อง ≥ 20 นาที หรือ active zone minutes ≥ 15
 
 **ห้ามเอาระยะทางมาเป็นเกณฑ์** — WHOOP ไม่มี GPS ในตัว ระยะทางมาจากมือถือ
 ถ้าไม่ได้พกมือถือไปด้วยจะเป็น `null` หรือน้อยผิดปกติทั้งที่เดินจริง (เจ้าของยืนยันเองเมื่อ 24 ส.ค.)

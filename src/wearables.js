@@ -317,6 +317,10 @@ const SPORT_TH = {
   rowing: "เรือพาย", elliptical: "เครื่องเดินวงรี", stairmaster: "เครื่องเดินขั้นบันได",
   "jump-rope": "กระโดดเชือก", hiking: "เดินป่า", dancing: "เต้น", "martial-arts": "ศิลปะการต่อสู้",
   activity: "กิจกรรมทั่วไป", meditation: "นั่งสมาธิ",
+  // ชื่อที่ Fitbit/Google ส่งมา (displayName กับ exerciseType)
+  workout: "ออกกำลังกาย", walk: "เดิน", run: "วิ่ง", spinning: "ปั่นจักรยาน (สปิน)",
+  bike: "ปั่นจักรยาน", treadmill: "ลู่วิ่ง", "weights": "เวทเทรนนิ่ง", sport: "เล่นกีฬา",
+  aerobic_workout: "แอโรบิก", "elliptical-trainer": "เครื่องเดินวงรี", swim: "ว่ายน้ำ",
 };
 const sportLabel = (slug) => SPORT_TH[slug] || String(slug || "ออกกำลังกาย").replace(/-/g, " ");
 
@@ -343,7 +347,12 @@ export function normalizeWhoopWorkouts(body) {
       avg_hr: score.average_heart_rate ?? null,
       max_hr: score.max_heart_rate ?? null,
       distance_m: score.distance_meter != null ? Math.round(score.distance_meter) : null,
+      steps: null,
+      active_zone_min: null,
       strain: score.strain != null ? Math.round(score.strain * 10) / 10 : null,
+      // WHOOP ไม่บอกว่าผู้ใช้กดเริ่มเองไหม ต้องดูที่ strain แทน
+      actively_started: null,
+      device: "WHOOP",
       scored: r.score_state === "SCORED",
     };
   });
@@ -360,6 +369,7 @@ export function normalizeGoogleWorkouts(body) {
     .map((d) => {
       const ex = d.exercise;
       const m = ex.metricsSummary || {};
+      const src = d.dataSource || {};
       const start = ex.interval?.startTime;
       const end = ex.interval?.endTime;
       // activeDuration มาเป็น duration string เช่น "1800s" — ถ้าไม่มีก็คิดจากช่วงเวลาแทน
@@ -368,7 +378,11 @@ export function normalizeGoogleWorkouts(body) {
         provider: "google",
         external_id: d.name || `${start}-${ex.exerciseType || ""}`,
         sport: String(ex.exerciseType || "").toLowerCase() || null,
-        activity: ex.displayName || sportLabel(String(ex.exerciseType || "").toLowerCase()),
+        activity: googleActivityLabel(ex),
+        // ACTIVELY_MEASURED = กดเริ่มเอง · PASSIVELY_MEASURED = นาฬิกาจับให้เอง
+        // ใช้ตัดสินเช็คอินอัตโนมัติ ตรงกว่าการเดาจากชื่อกีฬา
+        actively_started: src.recordingMethod === "ACTIVELY_MEASURED",
+        device: src.device?.displayName || null,
         date: bkkDateOf(start),
         start,
         end,
@@ -379,10 +393,24 @@ export function normalizeGoogleWorkouts(body) {
         avg_hr: num(m.averageHeartRateBeatsPerMinute),
         max_hr: null,
         distance_m: m.distanceMillimeters != null ? Math.round(m.distanceMillimeters / 1000) : null,
+        steps: num(m.steps),
+        active_zone_min: num(m.activeZoneMinutes),
         strain: null,
         scored: true,
       };
     });
+}
+
+// displayName ของ Fitbit บางทีเจาะจงกว่า exerciseType (เช่น "Spinning" ทั้งที่ type เป็น WORKOUT)
+// บางทีก็กว้างกว่า ("Workout") — เลือกอันที่แปลไทยได้ก่อน ถ้าไม่มีค่อยใช้ชื่ออังกฤษเดิม
+function googleActivityLabel(ex) {
+  const shown = String(ex.displayName || "").trim();
+  const type = String(ex.exerciseType || "").toLowerCase();
+  const shownKey = shown.toLowerCase().replace(/\s+/g, "-");
+  if (shownKey && SPORT_TH[shownKey] && shownKey !== type) return SPORT_TH[shownKey];
+  if (SPORT_TH[type]) return SPORT_TH[type];
+  if (SPORT_TH[shownKey]) return SPORT_TH[shownKey];
+  return shown || sportLabel(type);
 }
 
 // หลายฟิลด์ของ Google เป็น string ทั้งที่เป็นตัวเลข
@@ -412,6 +440,10 @@ const WALK_SPORTS = new Set(["walking", "walk"]);
 export function countsAsCheckin(w) {
   if (!w.scored) return { ok: false, why: "นาฬิกายังคำนวณคะแนนไม่เสร็จ" };
   if (!w.duration_min) return { ok: false, why: "ไม่มีระยะเวลา" };
+
+  // กดเริ่มเอง = ตั้งใจไปออกกำลังกาย นับเลยไม่ต้องดูอย่างอื่น
+  if (w.actively_started === true) return { ok: true };
+  // นาฬิกาจับให้เองและไม่ใช่การเดิน (เช่น Fitbit จับว่าวิ่ง) ก็นับ
   if (!WALK_SPORTS.has(w.sport)) return { ok: true };
 
   if (w.strain != null) {
@@ -419,9 +451,10 @@ export function countsAsCheckin(w) {
       ? { ok: true }
       : { ok: false, why: `เดินเบาเกินไป (strain ${w.strain}) ไม่นับเป็นการออกกำลังกาย` };
   }
-  return (w.duration_min || 0) >= WALK_MIN_MINUTES
-    ? { ok: true }
-    : { ok: false, why: `เดินสั้นเกินไป (${w.duration_min} นาที)` };
+  // ฝั่ง Fitbit ไม่มี strain — ใช้เวลา หรือ active zone minutes (นาทีที่หัวใจขึ้นโซนจริง) แทน
+  if ((w.duration_min || 0) >= WALK_MIN_MINUTES) return { ok: true };
+  if ((w.active_zone_min || 0) >= 15) return { ok: true };
+  return { ok: false, why: `เดินสั้นเกินไป (${w.duration_min} นาที)` };
 }
 
 export const normalizeWorkouts = (provider, body) =>
