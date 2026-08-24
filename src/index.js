@@ -1122,7 +1122,7 @@ async function handleApi(url, request, env) {
     }
     report.wearables = {};
     for (const name of ["whoop", "google"]) {
-      report.wearables[name] = { ready: W.providerReady(env, name) };
+      report.wearables[name] = W.providerDiagnostics(env, name);
     }
     report.wearables.TOKEN_KEY_set = trimmedLength(env, "TOKEN_KEY") > 0;
     try {

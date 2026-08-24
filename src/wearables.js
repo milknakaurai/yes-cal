@@ -351,7 +351,30 @@ export async function peekRaw(env, provider, kind, lineUserId) {
 }
 
 // เช็คว่าตั้ง secret ครบไหม ใช้ตอบใน /api/health และกันไม่ให้เริ่ม flow ทั้งที่ยังตั้งไม่ครบ
+// ระวัง: บอกได้แค่ว่า "ไม่ว่าง" ไม่ได้แปลว่า "ค่าถูก" — ดูของจริงที่ providerDiagnostics()
 export function providerReady(env, provider) {
   const p = PROVIDERS[provider];
   return Boolean(p && trim(env, p.clientIdVar) && trim(env, p.clientSecretVar) && trim(env, "TOKEN_KEY"));
+}
+
+// รายละเอียดไว้ไล่ปัญหาตอนผู้ให้บริการตอบ invalid_client
+// client_id ไม่ใช่ความลับ (ถูกส่งเป็น query string ในหน้าขอสิทธิ์อยู่แล้ว) จึงโชว์เต็มได้
+// ส่วน client_secret โชว์แค่ความยาว ห้ามโชว์ค่าจริงเด็ดขาด
+export function providerDiagnostics(env, provider) {
+  const p = PROVIDERS[provider];
+  const id = trim(env, p.clientIdVar);
+  const raw = env[p.clientIdVar] || "";
+  const secret = trim(env, p.clientSecretVar);
+  return {
+    ready: providerReady(env, provider),
+    client_id: id || null,
+    client_id_length: id.length,
+    // ตั้งผ่าน echo บน Windows แล้วมี \r หรือช่องว่างติดมาบ่อย
+    client_id_had_whitespace: raw !== id,
+    client_id_looks_like_uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
+    client_secret_length: secret.length,
+    // สลับค่ากันบ่อย — UUID ในช่อง secret แปลว่าน่าจะใส่สลับ
+    client_secret_looks_like_uuid:
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(secret),
+  };
 }

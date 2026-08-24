@@ -432,6 +432,10 @@ check('provider มั่ว → ตอบ error ไม่ throw', !!peekBad.err
 const health = await api('/api/health?key=dash');
 console.log('  wearables ใน /api/health:', JSON.stringify(health.wearables));
 check('/api/health บอกว่าตั้งค่าครบแล้ว', health.wearables.whoop.ready && health.wearables.google.ready);
+check('health โชว์ client_id ให้เทียบได้', health.wearables.whoop.client_id === 'whoop-id');
+check('health ไม่หลุด client_secret ออกมา',
+  !JSON.stringify(health).includes('whoop-secret') && !JSON.stringify(health).includes('google-secret'));
+check('health บอกความยาว client_secret แทน', health.wearables.whoop.client_secret_length === 'whoop-secret'.length);
 
 console.log('\n--- หน้าเว็บสาธารณะ ---');
 for (const [path, file] of [['/workout', 'workout.html'], ['/calories', 'calories.html'], ['/connect', 'connect.html'],
