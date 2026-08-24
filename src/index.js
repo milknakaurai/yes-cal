@@ -225,6 +225,8 @@ function helpText() {
     "🎯 ตั้งเป้า — คำนวณแคลเป้าหมายรายวัน",
     "💪 เป้าโปรตีน 140 — ตั้งเป้าโปรตีนเอง (ปกติคำนวณให้จากน้ำหนัก)",
     "⚖️ น้ำหนัก 65.5 — บันทึกน้ำหนักวันนี้",
+    "😴 นอน — สรุปการนอนกับ recovery จากนาฬิกา",
+    "⌚ เชื่อมนาฬิกา — ต่อ WHOOP หรือ Fitbit เข้ากับบอท",
     "🍜 กินอะไรดี — แนะนำเมนูให้พอดีกับที่เหลือของวันนี้",
     "     ใส่เงื่อนไขต่อท้ายได้ เช่น \"กินอะไรดี ร้านตามสั่ง\"",
     "📊 สรุป — ยอดวันนี้ของทั้งคู่",
@@ -1065,6 +1067,78 @@ async function replyDisconnect(env, event, userId) {
   ].join("\n"));
 }
 
+// คนที่ควรอยู่ในสรุปการนอนของแชทนี้
+// กลุ่มชาเลนจ์ = สมาชิกชาเลนจ์ · ที่อื่น = คนที่ตั้งเป้าไว้ (บ้านเดียวกัน)
+// ทั้งสองทางกรองเหลือเฉพาะคนที่เชื่อมนาฬิกาไว้จริง
+async function sleepAudience(env, chatId, userId) {
+  const mode = await getChatMode(env, chatId);
+  const rows = mode === "challenge"
+    ? (await env.DB.prepare(
+        `SELECT m.line_user_id, m.display_name FROM challenge_members m
+          WHERE m.chat_id = ? AND m.active = 1 ORDER BY m.joined_at`
+      ).bind(chatId).all()).results
+    : (await env.DB.prepare(
+        `SELECT line_user_id, display_name FROM users ORDER BY created_at`
+      ).all()).results;
+
+  const linked = (await env.DB.prepare(
+    `SELECT DISTINCT line_user_id FROM device_links`
+  ).all()).results.map((r) => r.line_user_id);
+
+  const out = rows.filter((r) => linked.includes(r.line_user_id));
+  // คนพิมพ์เองต้องอยู่ในลิสต์เสมอ ถึงจะยังไม่ได้ตั้งเป้าหรือยังไม่ได้เข้าร่วมชาเลนจ์
+  if (linked.includes(userId) && !out.some((r) => r.line_user_id === userId)) {
+    out.unshift({ line_user_id: userId, display_name: "คุณ" });
+  }
+  return out;
+}
+
+const hhmm = (min) => `${Math.floor(min / 60)} ชม. ${String(min % 60).padStart(2, "0")} น.`;
+
+async function replySleep(env, event, chatId, userId) {
+  const people = await sleepAudience(env, chatId, userId);
+  if (!people.length) {
+    return lineReply(env, event.replyToken,
+      'ยังไม่มีใครเชื่อมนาฬิกาไว้ครับ 😴\nพิมพ์ "เชื่อมนาฬิกา" เพื่อเริ่ม');
+  }
+
+  const results = await Promise.all(
+    people.map(async (p) => ({ name: p.display_name, data: await W.getNightSummary(env, p.line_user_id) }))
+  );
+
+  const lines = ["สรุปการนอนคืนล่าสุด 😴", ""];
+  for (const { name, data } of results) {
+    if (!data) continue;
+    if (data.error) { lines.push(`${name} — ${data.error}`, ""); continue; }
+    const s = data.sleep, r = data.recovery;
+    const head = [name];
+    if (s?.asleep_min) head.push(hhmm(s.asleep_min));
+    else head.push("ยังไม่มีข้อมูลการนอน");
+    lines.push(head.join(" — "));
+
+    const detail = [];
+    if (s?.performance_pct != null) detail.push(`คะแนนการนอน ${s.performance_pct}%`);
+    else if (s?.efficiency_pct != null) detail.push(`ประสิทธิภาพ ${s.efficiency_pct}%`);
+    if (s?.deep_min) detail.push(`หลับลึก ${s.deep_min} น.`);
+    if (s?.rem_min) detail.push(`REM ${s.rem_min} น.`);
+    if (detail.length) lines.push("   " + detail.join(" · "));
+
+    const rec = [];
+    if (r?.recovery_pct != null) rec.push(`recovery ${r.recovery_pct}%`);
+    if (r?.resting_hr != null) rec.push(`หัวใจขณะพัก ${r.resting_hr}`);
+    if (r?.hrv_ms != null) rec.push(`HRV ${r.hrv_ms} ms`);
+    if (rec.length) lines.push("   " + rec.join(" · "));
+    lines.push("");
+  }
+
+  if (lines.length <= 2) {
+    return lineReply(env, event.replyToken,
+      "ยังดึงข้อมูลการนอนไม่ได้ครับ 😴 ลองซิงก์แอปนาฬิกาก่อนแล้วพิมพ์ใหม่อีกครั้ง");
+  }
+  lines.push("ตัวเลขมาจากนาฬิกาของแต่ละคนโดยตรง");
+  return lineReply(env, event.replyToken, lines.join("\n").trim());
+}
+
 // คำสั่งกลุ่มนี้ใช้ได้ทั้งสองโหมด (ทั้งกลุ่มแคลอรี่และกลุ่มชาเลนจ์)
 async function handleWearableCommand(env, event, userId, chatId, text) {
   if (/^(เชื่อมนาฬิกา|เชื่อมต่อนาฬิกา|ผูกนาฬิกา|connect)$/i.test(text)) {
@@ -1075,6 +1149,9 @@ async function handleWearableCommand(env, event, userId, chatId, text) {
   }
   if (/^(ตัดการเชื่อมต่อ|ยกเลิกนาฬิกา|เลิกเชื่อมนาฬิกา|disconnect)$/i.test(text)) {
     return { handled: true, promise: replyDisconnect(env, event, userId) };
+  }
+  if (/^(นอน|การนอน|เมื่อคืนนอน|sleep|recovery)$/i.test(text)) {
+    return { handled: true, promise: replySleep(env, event, chatId, userId) };
   }
   return { handled: false };
 }
@@ -1164,6 +1241,23 @@ async function handleApi(url, request, env) {
       url.searchParams.get("kind") || "workout",
       url.searchParams.get("user") || null
     ));
+  }
+
+  // การนอน + recovery ของทุกคนที่เชื่อมนาฬิกาไว้ (หน้า /calories เอาไปแสดง)
+  if (url.pathname === "/api/sleep") {
+    const linked = (await env.DB.prepare(
+      `SELECT d.line_user_id, d.provider, d.display_name AS device_name, u.display_name
+         FROM device_links d LEFT JOIN users u ON u.line_user_id = d.line_user_id
+        ORDER BY d.connected_at`
+    ).all().catch(() => ({ results: [] }))).results;
+
+    const people = await Promise.all(linked.map(async (l) => ({
+      id: l.line_user_id,
+      name: l.display_name || l.device_name || "ไม่ทราบชื่อ",
+      provider: l.provider,
+      ...(await W.getNightSummary(env, l.line_user_id).catch(() => ({ sleep: null, recovery: null }))),
+    })));
+    return jsonResponse({ today: bkkToday(), people });
   }
 
   if (url.pathname === "/api/overview") {

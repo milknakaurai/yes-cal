@@ -420,6 +420,130 @@ function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+// ---------------------------------------------------------------- การนอน / recovery
+
+const mins = (milli) => (milli == null ? null : Math.round(milli / 60000));
+
+// WHOOP /v2/activity/sleep
+// ⚠️ ยังไม่ได้เห็น response จริง — เข้าถึงฟิลด์แบบกันพัง ถ้าชื่อไม่ตรงจะได้ null ไม่ใช่ error
+export function normalizeWhoopSleep(body) {
+  const r = (body?.records || []).filter((x) => !x.nap)[0] || (body?.records || [])[0];
+  if (!r) return null;
+  const sc = r.score_state === "SCORED" ? r.score || {} : {};
+  const st = sc.stage_summary || {};
+  const inBed = mins(st.total_in_bed_time_milli);
+  const awake = mins(st.total_awake_time_milli);
+  const asleep = inBed != null && awake != null ? inBed - awake : null;
+  return {
+    provider: "whoop",
+    date: bkkDateOf(r.end || r.start),
+    start: r.start || null,
+    end: r.end || null,
+    asleep_min: asleep,
+    in_bed_min: inBed,
+    awake_min: awake,
+    performance_pct: sc.sleep_performance_percentage ?? null,
+    efficiency_pct: sc.sleep_efficiency_percentage ?? null,
+    deep_min: mins(st.total_slow_wave_sleep_time_milli),
+    rem_min: mins(st.total_rem_sleep_time_milli),
+    scored: r.score_state === "SCORED",
+  };
+}
+
+// Google Health — ยืนยันจาก discovery document (minutesAsleep ฯลฯ เป็น string)
+export function normalizeGoogleSleep(body) {
+  const d = (body?.dataPoints || []).filter((x) => x.sleep)[0];
+  if (!d) return null;
+  const sum = d.sleep.summary || {};
+  const asleep = num(sum.minutesAsleep);
+  const inBed = num(sum.minutesInSleepPeriod);
+  return {
+    provider: "google",
+    date: bkkDateOf(d.sleep.interval?.endTime || d.sleep.interval?.startTime),
+    start: d.sleep.interval?.startTime || null,
+    end: d.sleep.interval?.endTime || null,
+    asleep_min: asleep,
+    in_bed_min: inBed,
+    awake_min: num(sum.minutesAwake),
+    // Google ไม่มีคะแนนการนอนให้ คิดประสิทธิภาพเองจากเวลาที่หลับจริงเทียบเวลาบนเตียง
+    performance_pct: null,
+    efficiency_pct: asleep && inBed ? Math.round((asleep / inBed) * 100) : null,
+    deep_min: null,
+    rem_min: null,
+    scored: true,
+  };
+}
+
+// WHOOP /v2/recovery — ⚠️ ยังไม่ได้เห็น response จริงเช่นกัน
+export function normalizeWhoopRecovery(body) {
+  const r = (body?.records || [])[0];
+  if (!r) return null;
+  const sc = r.score_state === "SCORED" ? r.score || {} : {};
+  return {
+    provider: "whoop",
+    recovery_pct: sc.recovery_score != null ? Math.round(sc.recovery_score) : null,
+    resting_hr: sc.resting_heart_rate ?? null,
+    hrv_ms: sc.hrv_rmssd_milli != null ? Math.round(sc.hrv_rmssd_milli) : null,
+    scored: r.score_state === "SCORED",
+  };
+}
+
+// Google ไม่มีคะแนน recovery — ประกอบเองจากหัวใจขณะพัก + HRV รายวัน (คนละ endpoint)
+export function normalizeGoogleRecovery(rhrBody, hrvBody) {
+  const rhr = (rhrBody?.dataPoints || []).filter((d) => d.dailyRestingHeartRate)[0];
+  const hrv = (hrvBody?.dataPoints || []).filter((d) => d.dailyHeartRateVariability)[0];
+  if (!rhr && !hrv) return null;
+  const ms = hrv?.dailyHeartRateVariability?.averageHeartRateVariabilityMilliseconds;
+  return {
+    provider: "google",
+    recovery_pct: null,
+    resting_hr: num(rhr?.dailyRestingHeartRate?.beatsPerMinute),
+    hrv_ms: ms != null ? Math.round(ms) : null,
+    scored: true,
+  };
+}
+
+// ดึงการนอน + recovery ของคืนล่าสุดของคนคนเดียว
+// คืน null ถ้ายังไม่ได้เชื่อมนาฬิกา · ฟิลด์ไหนดึงไม่ได้ก็เป็น null ไม่ให้ทั้งก้อนพัง
+export async function getNightSummary(env, lineUserId) {
+  await ensureWearableTables(env);
+  const link = await env.DB.prepare(
+    `SELECT provider FROM device_links WHERE line_user_id = ? ORDER BY updated_at DESC LIMIT 1`
+  ).bind(lineUserId).first();
+  if (!link) return null;
+
+  const provider = link.provider;
+  const token = await getAccessToken(env, lineUserId, provider);
+  if (!token) return { provider, error: "โทเคนใช้ไม่ได้แล้ว ต้องเชื่อมนาฬิกาใหม่" };
+
+  const get = async (kind) => {
+    const url = DATA_URLS[provider]?.[kind];
+    if (!url) return null;
+    try {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      return res.ok ? await res.json() : null;
+    } catch (e) {
+      console.error(`ดึง ${provider}/${kind} ไม่ได้`, e.message);
+      return null;
+    }
+  };
+
+  if (provider === "whoop") {
+    const [sleepBody, recBody] = await Promise.all([get("sleep"), get("recovery")]);
+    return {
+      provider,
+      sleep: sleepBody ? normalizeWhoopSleep(sleepBody) : null,
+      recovery: recBody ? normalizeWhoopRecovery(recBody) : null,
+    };
+  }
+  const [sleepBody, rhrBody, hrvBody] = await Promise.all([get("sleep"), get("recovery"), get("hrv")]);
+  return {
+    provider,
+    sleep: sleepBody ? normalizeGoogleSleep(sleepBody) : null,
+    recovery: normalizeGoogleRecovery(rhrBody, hrvBody),
+  };
+}
+
 // ---------------------------------------------------------------- เกณฑ์เช็คอินอัตโนมัติ
 //
 // เจ้าของเลือกไว้: นับทุกอย่างที่นาฬิกาจับได้ แต่ "เดิน" ต้องหนักพอถึงนับ
@@ -475,8 +599,11 @@ export const DATA_URLS = {
     sleep: "https://health.googleapis.com/v4/users/me/dataTypes/sleep/dataPoints?pageSize=5",
     recovery:
       "https://health.googleapis.com/v4/users/me/dataTypes/daily-resting-heart-rate/dataPoints?pageSize=5",
+    hrv: "https://health.googleapis.com/v4/users/me/dataTypes/daily-heart-rate-variability/dataPoints?pageSize=5",
   },
 };
+
+// ทั้งสองเจ้าคืนรายการใหม่สุดมาก่อน จึงหยิบตัวแรกได้เลย ไม่ต้องยุ่งกับ filter ตามวันที่
 
 // เจ้าของเรียกดูได้ว่าผู้ให้บริการส่งอะไรกลับมาจริง ๆ ไว้ใช้แมปฟิลด์ให้ถูก
 // ไม่ได้ตั้งใจให้ใช้ประจำ — ต้องมี DASHBOARD_KEY ถึงเรียกได้

@@ -96,6 +96,7 @@ let botSeq = 0;
 export let lastBotMessageId = null;
 
 const worker = (await import(new URL('../src/index.js', import.meta.url))).default;
+const WN = await import(new URL('../src/wearables.js', import.meta.url));
 const ctx = { waitUntil: (p) => p };
 
 async function send(event) {
@@ -424,6 +425,50 @@ show('Milk พิมพ์ "ตัดการเชื่อมต่อ"', awa
 check('ตัดการเชื่อมต่อแล้วโทเคนหายหมด',
   db.prepare(`SELECT COUNT(*) AS n FROM device_links WHERE line_user_id='U_DM'`).get().n === 0);
 
+// ---- การนอน + recovery ----
+console.log('\n--- การนอน + recovery ---');
+// ตัวอย่าง response ตามสเปกของแต่ละเจ้า (WHOOP ยังไม่ได้ยืนยันกับของจริง)
+const whoopSleep = WN.normalizeWhoopSleep({ records: [{
+  id: 's1', start: '2026-08-23T16:10:00Z', end: '2026-08-23T23:40:00Z', nap: false,
+  score_state: 'SCORED', score: { sleep_performance_percentage: 88, sleep_efficiency_percentage: 92,
+    stage_summary: { total_in_bed_time_milli: 27000000, total_awake_time_milli: 1800000,
+      total_slow_wave_sleep_time_milli: 5400000, total_rem_sleep_time_milli: 6300000 } } }] });
+check('WHOOP: หลับจริง = เวลาบนเตียง - ตื่น', whoopSleep.asleep_min === 420);
+check('WHOOP: อ่านคะแนนการนอน', whoopSleep.performance_pct === 88);
+check('WHOOP: หลับลึกกับ REM เป็นนาที', whoopSleep.deep_min === 90 && whoopSleep.rem_min === 105);
+check('WHOOP: ลงวันที่ตามวันที่ตื่น', whoopSleep.date === '2026-08-24');
+check('WHOOP: งีบกลางวันไม่ถูกเลือกมาเป็นการนอนหลัก',
+  WN.normalizeWhoopSleep({ records: [
+    { id: 'n', nap: true, start: '2026-08-24T06:00:00Z', end: '2026-08-24T07:00:00Z', score_state: 'SCORED', score: {} },
+    { id: 'm', nap: false, start: '2026-08-23T16:00:00Z', end: '2026-08-23T23:00:00Z', score_state: 'SCORED', score: {} },
+  ] }).start === '2026-08-23T16:00:00Z');
+
+const gSleep = WN.normalizeGoogleSleep({ dataPoints: [{ sleep: {
+  interval: { startTime: '2026-08-23T16:30:00Z', endTime: '2026-08-23T23:15:00Z' },
+  summary: { minutesAsleep: '372', minutesInSleepPeriod: '405', minutesAwake: '33' } } }] });
+check('Fitbit: นาทีที่เป็น string แปลงแล้ว', gSleep.asleep_min === 372);
+check('Fitbit: คิดประสิทธิภาพเอง (ไม่มีคะแนนให้)', gSleep.efficiency_pct === 92);
+
+const gRec = WN.normalizeGoogleRecovery(
+  { dataPoints: [{ dailyRestingHeartRate: { beatsPerMinute: '58' } }] },
+  { dataPoints: [{ dailyHeartRateVariability: { averageHeartRateVariabilityMilliseconds: 46.7 } }] });
+check('Fitbit: ประกอบ recovery จากสอง endpoint', gRec.resting_hr === 58 && gRec.hrv_ms === 47);
+check('Fitbit: ไม่มีข้อมูลเลย → null ไม่ใช่ก้อนว่าง',
+  WN.normalizeGoogleRecovery({ dataPoints: [] }, { dataPoints: [] }) === null);
+
+const whoopRec = WN.normalizeWhoopRecovery({ records: [{ score_state: 'SCORED',
+  score: { recovery_score: 71.4, resting_heart_rate: 52, hrv_rmssd_milli: 88.2 } }] });
+check('WHOOP: อ่าน recovery ครบ',
+  whoopRec.recovery_pct === 71 && whoopRec.resting_hr === 52 && whoopRec.hrv_ms === 88);
+check('WHOOP: ยังไม่ได้คะแนน → ไม่เอาตัวเลขมั่วมาโชว์',
+  WN.normalizeWhoopRecovery({ records: [{ score_state: 'PENDING_SCORE', score: { recovery_score: 99 } }] }).recovery_pct === null);
+
+const sleepApi = await api('/api/sleep?key=dash');
+check('/api/sleep ตอบได้แม้ยังไม่มีใครเชื่อม', Array.isArray(sleepApi.people));
+const sleepNoAuth = await worker.fetch(new Request('https://x/api/sleep'), env, ctx);
+check('/api/sleep ต้องมี DASHBOARD_KEY', sleepNoAuth.status === 401);
+show('Milk พิมพ์ "นอน" ตอนยังไม่ได้เชื่อมนาฬิกา', await send(dmEvent('U_DM', 'นอน')));
+
 // ---- ดูข้อมูลดิบ ----
 const peekNoLink = await api('/api/device-peek?key=dash&provider=whoop&kind=workout');
 check('ยังไม่มีใครเชื่อม → บอกเหตุผล ไม่ระเบิด', String(peekNoLink.error || '').includes('ยังไม่มีใครเชื่อม'));
@@ -457,7 +502,6 @@ check('ไม่ปล่อยให้เด้งไปเจอหน้า 
 
 // ---- แปลงข้อมูลนาฬิกา (ใช้ payload จริงจาก WHOOP ที่เก็บไว้ใน fixtures) ----
 console.log('\n--- แปลงข้อมูลนาฬิกา ---');
-const WN = await import(new URL('../src/wearables.js', import.meta.url));
 const whoopBody = JSON.parse(readFileSync(new URL('./fixtures/whoop-workout.json', import.meta.url), 'utf8'));
 const wo = WN.normalizeWhoopWorkouts(whoopBody);
 check('อ่านครบทุกรายการ', wo.length === 5);

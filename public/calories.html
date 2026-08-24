@@ -85,6 +85,13 @@
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   th.num { text-align: right; }
   .empty { color: var(--text-muted); font-size: 13.5px; padding: 12px 0; }
+  .sleep-row { display: flex; align-items: baseline; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--grid); flex-wrap: wrap; }
+  .sleep-row:last-child { border-bottom: none; }
+  .sleep-row .who { font-weight: 600; font-size: 14px; min-width: 90px; }
+  .sleep-row .hrs { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .sleep-row .hrs small { font-size: 13px; font-weight: 400; color: var(--text-secondary); }
+  .sleep-row .bits { font-size: 12.5px; color: var(--text-secondary); }
+  .sleep-row .src { font-size: 11.5px; color: var(--text-muted); margin-left: auto; }
   #tooltip {
     position: fixed; pointer-events: none; z-index: 10; display: none;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
@@ -129,10 +136,46 @@ function keyFromUrl() {
 
 async function load() {
   const key = localStorage.getItem("yescal_key") || "";
-  const res = await fetch("/api/overview?days=14" + (key ? "&key=" + encodeURIComponent(key) : ""));
+  const auth = key ? "&key=" + encodeURIComponent(key) : "";
+  const res = await fetch("/api/overview?days=14" + auth);
   if (res.status === 401) return renderKeyPrompt();
   DATA = await res.json();
   render();
+  // การนอนดึงจากนาฬิกาสด ๆ ช้ากว่าอย่างอื่น เลยโหลดทีหลังแล้วค่อยเติมเข้าไป
+  loadSleep(auth);
+}
+
+async function loadSleep(auth) {
+  try {
+    const res = await fetch("/api/sleep?x=1" + auth);
+    if (!res.ok) return;
+    renderSleep(await res.json());
+  } catch (e) { /* ไม่มีข้อมูลการนอนก็ไม่ต้องขึ้นอะไร */ }
+}
+
+const hhmm = (min) => `${Math.floor(min / 60)}<small> ชม. </small>${String(min % 60).padStart(2, "0")}<small> น.</small>`;
+
+function renderSleep(data) {
+  const slot = document.getElementById("sleepcard");
+  if (!slot || !data.people?.length) return;
+  const rows = data.people.map((p) => {
+    const s = p.sleep, r = p.recovery;
+    const bits = [];
+    if (s?.performance_pct != null) bits.push(`คะแนน ${s.performance_pct}%`);
+    else if (s?.efficiency_pct != null) bits.push(`ประสิทธิภาพ ${s.efficiency_pct}%`);
+    if (s?.deep_min) bits.push(`หลับลึก ${s.deep_min} น.`);
+    if (r?.recovery_pct != null) bits.push(`recovery ${r.recovery_pct}%`);
+    if (r?.resting_hr != null) bits.push(`หัวใจพัก ${r.resting_hr}`);
+    if (r?.hrv_ms != null) bits.push(`HRV ${r.hrv_ms}`);
+    return `<div class="sleep-row">
+      <span class="who">${esc(p.name)}</span>
+      <span class="hrs">${s?.asleep_min ? hhmm(s.asleep_min) : '<small>ยังไม่มีข้อมูล</small>'}</span>
+      <span class="bits">${bits.join(" · ")}</span>
+      <span class="src">${p.provider === "whoop" ? "WHOOP" : "Fitbit"}</span>
+    </div>`;
+  }).join("");
+  slot.innerHTML = `<h2>การนอน &amp; recovery คืนล่าสุด 😴</h2>${rows}`;
+  slot.style.display = "";
 }
 
 function renderKeyPrompt() {
@@ -161,11 +204,15 @@ function render() {
   const { today, users } = DATA;
   if (!users.length) {
     $app.innerHTML = `<header><h1>Yes Cal 🍚</h1><a class="navlink" href="/workout">ไปหน้าชาเลนจ์ →</a></header>
+      <div class="card" id="sleepcard" style="display:none"></div>
       <div class="card"><div class="empty">ยังไม่มีข้อมูล — เริ่มพิมพ์อาหารในกลุ่ม LINE ได้เลยครับ</div></div>`;
     return;
   }
 
   let html = `<header><h1>Yes Cal 🍚</h1><span class="date">${thaiDate(today)}</span><a class="navlink" href="/workout">ไปหน้าชาเลนจ์ →</a></header>`;
+
+  // ที่ว่างไว้ให้การนอน — ซ่อนไว้ก่อนจนกว่า /api/sleep จะตอบกลับมา
+  html += `<div class="card" id="sleepcard" style="display:none"></div>`;
 
   // การ์ดสรุปวันนี้ของแต่ละคน
   html += `<div class="cards">`;

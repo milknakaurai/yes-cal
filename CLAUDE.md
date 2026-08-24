@@ -84,6 +84,13 @@ bash scripts/deploy.sh
   `configProblem()` จับสองอาการนี้แล้ว และ `/api/health` โชว์ `client_id` เต็ม ๆ ให้เทียบได้
   (client_id ไม่ใช่ความลับ ส่วน secret โชว์แค่ความยาว มีเทสคุมว่าห้ามหลุด)
   **ทางที่ชัวร์ที่สุดคือตั้งผ่านหน้าเว็บ Cloudflare** ไม่ใช่ command line
+  **สรุปการนอน/recovery ดึงสดจากนาฬิกาทุกครั้ง ไม่ได้เก็บใน D1** — คำสั่ง `นอน` ในแชท
+  และ `/api/sleep` ที่หน้า `/calories` เอาไปแสดง (ยังไม่มี cron เก็บย้อนหลัง)
+  ฝั่ง Google ไม่มีคะแนนการนอนกับ recovery ให้ ต้องคำนวณประสิทธิภาพเอง
+  และประกอบ recovery จาก `daily-resting-heart-rate` + `daily-heart-rate-variability` คนละ endpoint
+  **ฟังก์ชัน sleep/recovery ของ WHOOP ยังไม่ได้ยืนยันกับ response จริง** (ต่างจาก workout ที่ยืนยันแล้ว)
+  เข้าถึงฟิลด์แบบกันพังไว้ ถ้าชื่อไม่ตรงจะได้ null ไม่ใช่ error — ดูของจริงได้ที่
+  `/api/device-peek?key=...&provider=whoop&kind=sleep` (และ `kind=recovery`)
 - `docs/wearables.md` — สเปกการเชื่อม Whoop + Fitbit
   **Fitbit API เดิมตาย ก.ย. 2026** ต้องใช้ Google Health API v4 เท่านั้น
   **Google Health API อ่านข้อมูล Whoop ไม่ได้** — Whoop เข้า Health Connect ซึ่งเป็นที่เก็บบนเครื่อง ไม่มี cloud API
