@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yes Cal — นโยบายความเป็นส่วนตัว / Privacy Policy</title>
+<link rel="stylesheet" href="/site.css">
+<script src="/site.js" defer></script>
+</head>
+<body>
+
+<div class="topbar">
+  <a class="brand" href="/">Yes Cal 💪</a>
+  <nav>
+    <a href="/">Home</a>
+    <a href="/terms">Terms</a>
+    <button type="button" id="langbtn">English</button>
+  </nav>
+</div>
+
+<!-- ================= ไทย ================= -->
+<div data-lang="th">
+  <h1>นโยบายความเป็นส่วนตัว</h1>
+  <p class="meta">มีผลตั้งแต่ 24 สิงหาคม 2026</p>
+
+  <p>
+    Yes Cal ("บริการ") เป็นบอทบน LINE สำหรับชาเลนจ์ออกกำลังกายในกลุ่มและการบันทึกแคลอรี่
+    ดำเนินการเป็นโปรเจกต์ส่วนตัว ไม่ใช่บริการเชิงพาณิชย์ ไม่มีโฆษณา และไม่มีการขายข้อมูล
+    เอกสารนี้อธิบายว่าเราเก็บอะไร ใช้ทำอะไร ใครเห็นได้บ้าง และคุณจะลบมันได้อย่างไร
+  </p>
+
+  <h2>1. ข้อมูลที่เราเก็บ</h2>
+
+  <h3>จาก LINE</h3>
+  <ul>
+    <li>รหัสผู้ใช้ LINE (user ID) และชื่อที่แสดง</li>
+    <li>รหัสกลุ่มหรือห้องแชทที่บอทอยู่</li>
+    <li>รหัสข้อความ (message ID) ของข้อความที่ทำให้เกิดรายการบันทึก เพื่อให้ตอบกลับไปแก้ไขรายการนั้นได้</li>
+  </ul>
+  <p>เราไม่เก็บบทสนทนาทั่วไปในกลุ่ม ข้อความที่ไม่เกี่ยวกับคำสั่งหรือการบันทึกจะไม่ถูกจัดเก็บ</p>
+
+  <h3>การเช็คอินออกกำลังกาย</h3>
+  <ul>
+    <li>ชื่อกิจกรรม ระยะเวลา แคลอรี่ วันที่ และช่องทางที่บันทึก (รูปหรือข้อความ)</li>
+  </ul>
+
+  <h3>รูปภาพและข้อความที่ส่งให้บอท</h3>
+  <p>
+    เมื่อคุณส่งรูปหน้าจอออกกำลังกายหรือรูปอาหาร ระบบจะดึงไฟล์จาก LINE
+    แล้วส่งไปให้ <strong>Google Gemini API</strong> เพื่ออ่านตัวเลขออกมา
+    <strong>เราไม่จัดเก็บไฟล์รูปไว้เลย</strong> เก็บเฉพาะตัวเลขและชื่อรายการที่อ่านได้
+  </p>
+  <div class="notice">
+    <p><strong>ข้อควรทราบ</strong> ปัจจุบันบริการใช้ Gemini API ระดับฟรี
+      ซึ่งตามเงื่อนไขของ Google เนื้อหาที่ส่งเข้าไปอาจถูก Google นำไปใช้ปรับปรุงบริการของเขาได้
+      หากไม่ต้องการให้รูปผ่านระบบนี้ กรุณาพิมพ์บอกเป็นข้อความแทนการส่งรูป</p>
+  </div>
+
+  <h3>ข้อมูลจากนาฬิกาที่คุณเชื่อมเอง (WHOOP / Fitbit ผ่าน Google Health)</h3>
+  <p>การเชื่อมต่อเป็นเรื่องสมัครใจล้วน ๆ ถ้าไม่เชื่อม บริการก็ใช้งานได้ตามปกติ เมื่อคุณอนุญาต เราจะอ่าน:</p>
+  <ul>
+    <li>รายการออกกำลังกาย — ชนิด เวลาเริ่ม/จบ ระยะเวลา แคลอรี่ หัวใจเฉลี่ย ระยะทาง</li>
+    <li>การนอน — เวลาเข้านอน/ตื่น และระยะเวลาที่หลับ</li>
+    <li>ตัวชี้วัดสุขภาพรายวัน — หัวใจขณะพัก ความแปรปรวนหัวใจ (HRV) และคะแนน recovery</li>
+    <li>โทเคนสำหรับเข้าถึงข้อมูล (access token / refresh token)</li>
+  </ul>
+  <p>
+    เราขอสิทธิ์แบบ <strong>อ่านอย่างเดียว</strong> ไม่เขียนหรือแก้ข้อมูลในบัญชีนาฬิกาของคุณ
+    และ<strong>ไม่ดึงข้อมูลตำแหน่ง GPS</strong>
+  </p>
+  <p>
+    <strong>ข้อมูลจากนาฬิกาจะไม่ถูกส่งให้ Gemini หรือ AI ใด ๆ</strong>
+    ใช้แสดงผลในกลุ่มและหน้าสถิติเท่านั้น
+  </p>
+
+  <h3>โหมดนับแคลอรี่ (ถ้าใช้)</h3>
+  <ul>
+    <li>รายการอาหารที่บันทึก พร้อมแคลอรี่และสารอาหาร</li>
+    <li>น้ำหนักที่บันทึก</li>
+    <li>เพศ อายุ ส่วนสูง น้ำหนัก ระดับกิจกรรม และเป้าหมาย ที่คุณกรอกเองเพื่อคำนวณเป้ารายวัน</li>
+  </ul>
+
+  <h2>2. เราใช้ข้อมูลทำอะไร</h2>
+  <ul>
+    <li>บันทึกการเช็คอินและตอบกลับในแชท</li>
+    <li>บอกว่าวันนี้ใครออกกำลังกายแล้ว ใครยัง และแท็กเตือนตอน 22:00</li>
+    <li>คำนวณอันดับ สตรีค และสถิติย้อนหลังของกลุ่ม</li>
+    <li>แสดงผลบนหน้าสถิติของกลุ่ม</li>
+    <li>คำนวณเป้าแคลอรี่/โปรตีน และแนะนำเมนู (เฉพาะโหมดนับแคลอรี่)</li>
+  </ul>
+  <p>
+    เราไม่ใช้ข้อมูลของคุณเพื่อโฆษณา ไม่ขาย ไม่แลกเปลี่ยน และไม่ส่งต่อให้บุคคลที่สาม
+    นอกเหนือจากผู้ให้บริการที่จำเป็นในข้อ 4
+  </p>
+  <p>
+    ข้อมูลสุขภาพที่ได้จาก Google Health API จะถูกใช้เพื่อให้ฟีเจอร์ที่ผู้ใช้เห็นเท่านั้น
+    ไม่นำไปโฆษณา ไม่ขาย ไม่ใช้ฝึกโมเดล AI และไม่มีมนุษย์คนใดเปิดอ่าน
+    ยกเว้นกรณีที่คุณร้องขอความช่วยเหลือ หรือจำเป็นตามกฎหมาย
+  </p>
+
+  <h2>3. ใครเห็นข้อมูลของคุณบ้าง</h2>
+  <div class="notice">
+    <p><strong>โปรดเข้าใจก่อนเข้าร่วม:</strong> ชาเลนจ์นี้ออกแบบมาให้เห็นกันในกลุ่ม</p>
+    <p>ชื่อของคุณ สถานะว่าวันนี้ออกกำลังกายหรือยัง กิจกรรมที่ทำ ตัวเลขที่บันทึก และสถิติย้อนหลัง
+      <strong>สมาชิกคนอื่นในกลุ่ม LINE เดียวกันเห็นทั้งหมด</strong> รวมถึงตอนที่บอทแท็กเตือนตอน 22:00</p>
+    <p>ถ้าคุณเชื่อมนาฬิกา ข้อมูลการนอนและ recovery จะปรากฏในกลุ่มเดียวกันนี้ด้วย</p>
+  </div>
+  <p>
+    แต่ละกลุ่มมีหน้าสถิติของตัวเองที่เปิดด้วยลิงก์ลับเฉพาะกลุ่ม
+    <strong>กลุ่มหนึ่งไม่สามารถเปิดดูข้อมูลของอีกกลุ่มได้</strong>
+    ใครก็ตามที่ได้ลิงก์ของกลุ่มไปจะเปิดดูข้อมูลกลุ่มนั้นได้ ถ้าลิงก์หลุด พิมพ์
+    <code>ลิงก์ใหม่</code> ในกลุ่มเพื่อยกเลิกลิงก์เดิมทันที
+  </p>
+
+  <h2>4. ผู้ให้บริการที่เกี่ยวข้อง</h2>
+  <table>
+    <thead><tr><th>ผู้ให้บริการ</th><th>บทบาท</th></tr></thead>
+    <tbody>
+      <tr><td>LINE Corporation</td><td>ช่องทางรับส่งข้อความ รูปภาพ และชื่อผู้ใช้</td></tr>
+      <tr><td>Cloudflare</td><td>รันระบบและเก็บฐานข้อมูล (Workers และ D1)</td></tr>
+      <tr><td>Google (Gemini API)</td><td>อ่านตัวเลขจากรูปและข้อความ · ไม่ได้รับข้อมูลจากนาฬิกา</td></tr>
+      <tr><td>Google (Health API)</td><td>ต้นทางข้อมูล Fitbit เฉพาะเมื่อคุณเชื่อมบัญชีเอง</td></tr>
+      <tr><td>WHOOP</td><td>ต้นทางข้อมูล WHOOP เฉพาะเมื่อคุณเชื่อมบัญชีเอง</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5. การเก็บรักษาและความปลอดภัย</h2>
+  <ul>
+    <li>ข้อมูลเก็บในฐานข้อมูล Cloudflare D1 การเชื่อมต่อทั้งหมดเข้ารหัสด้วย HTTPS</li>
+    <li>โทเคนของนาฬิกาถูกเข้ารหัสก่อนบันทึกลงฐานข้อมูล</li>
+    <li>ทุก request จาก LINE ถูกตรวจลายเซ็นก่อนประมวลผล</li>
+    <li>หน้าสถิติเปิดได้เฉพาะผู้ที่มีลิงก์ลับของกลุ่ม หรือรหัสของผู้ดูแล</li>
+  </ul>
+  <p>
+    เราเก็บข้อมูลไว้ตราบที่คุณยังใช้งานอยู่ ไม่มีการลบอัตโนมัติตามกำหนดเวลา
+    เพราะสถิติย้อนหลังคือประโยชน์หลักของบริการ
+  </p>
+
+  <h2>6. สิทธิของคุณและวิธีลบข้อมูล</h2>
+  <p>ทำได้เองทันทีในแชท:</p>
+  <ul>
+    <li>พิมพ์ <code>ลบ</code> เพื่อลบรายการเช็คอินล่าสุดของตัวเอง</li>
+    <li>พิมพ์ <code>ออกจากชาเลนจ์</code> เพื่อถอนตัวจากกลุ่ม</li>
+    <li>พิมพ์ <code>ล้างวันนี้</code> เพื่อลบรายการอาหารของวันนี้ (โหมดนับแคลอรี่)</li>
+  </ul>
+  <p>ยกเลิกการเชื่อมนาฬิกาได้ที่ต้นทางโดยตรง:</p>
+  <ul>
+    <li>WHOOP — ในแอปหรือเว็บ WHOOP หัวข้อการเชื่อมต่อกับแอปอื่น</li>
+    <li>Fitbit / Google — ที่ <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a></li>
+  </ul>
+  <p>
+    เมื่อคุณยกเลิก เราจะหยุดดึงข้อมูลใหม่ทันที หากต้องการให้ลบข้อมูลที่ดึงไปแล้วทั้งหมดด้วย
+    กรุณาแจ้งมาตามช่องทางในข้อ 9
+  </p>
+  <p>
+    ตามพระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562 (PDPA) คุณมีสิทธิขอเข้าถึง แก้ไข
+    ขอสำเนา คัดค้านการประมวลผล และขอให้ลบข้อมูลส่วนบุคคลของคุณ ติดต่อได้ตามข้อ 9
+  </p>
+
+  <h2>7. ผู้เยาว์</h2>
+  <p>บริการนี้ไม่ได้ออกแบบสำหรับเด็กอายุต่ำกว่า 13 ปี และเราไม่เก็บข้อมูลจากเด็กอายุต่ำกว่า 13 ปีโดยเจตนา</p>
+
+  <h2>8. การเปลี่ยนแปลงนโยบาย</h2>
+  <p>
+    หากมีการแก้ไข เราจะปรับวันที่มีผลด้านบนหน้านี้
+    การเปลี่ยนแปลงที่กระทบต่อข้อมูลของคุณอย่างมีนัยสำคัญจะแจ้งในกลุ่ม LINE ที่บอทอยู่
+  </p>
+
+  <h2 id="contact">9. ติดต่อ</h2>
+  <div class="notice">
+    <p><strong>⚠️ ต้องกรอกอีเมลติดต่อตรงนี้ก่อนส่งฟอร์มขออนุมัติแอป</strong></p>
+    <p>แทนที่บรรทัดนี้ด้วยอีเมลจริง เช่น <code>อีเมลของคุณ@example.com</code></p>
+  </div>
+  <p>หรือทักมาที่บัญชีทางการ Yes Cal บน LINE ได้โดยตรง</p>
+</div>
+
+<!-- ================= English ================= -->
+<div data-lang="en">
+  <h1>Privacy Policy</h1>
+  <p class="meta">Effective 24 August 2026</p>
+
+  <p>
+    Yes Cal (the "Service") is a LINE bot for group workout challenges and calorie logging.
+    It is run as a personal, non-commercial project. It carries no advertising and sells no data.
+    This policy explains what we collect, what we do with it, who can see it, and how you delete it.
+  </p>
+
+  <h2>1. What we collect</h2>
+
+  <h3>From LINE</h3>
+  <ul>
+    <li>Your LINE user ID and display name</li>
+    <li>The ID of the group or room the bot is in</li>
+    <li>The message ID of a message that produced a record, so you can reply to that message to correct it</li>
+  </ul>
+  <p>We do not store ordinary group conversation. Messages that are not a command or a log entry are not retained.</p>
+
+  <h3>Workout check-ins</h3>
+  <ul>
+    <li>Activity name, duration, calories, date, and whether it came from an image or from text</li>
+  </ul>
+
+  <h3>Images and text you send to the bot</h3>
+  <p>
+    When you send a workout or food photo, the Service fetches the file from LINE and passes it to the
+    <strong>Google Gemini API</strong> to read the figures from it.
+    <strong>We do not store the image itself</strong> — only the numbers and item names read from it.
+  </p>
+  <div class="notice">
+    <p><strong>Please note.</strong> The Service currently uses the free tier of the Gemini API. Under Google's
+      terms for that tier, content sent to the API may be used by Google to improve its services.
+      If you would rather your photos not pass through it, type your workout as text instead.</p>
+  </div>
+
+  <h3>Wearable data, if you choose to connect one (WHOOP / Fitbit via Google Health)</h3>
+  <p>Connecting is entirely optional; the Service works fully without it. If you grant access, we read:</p>
+  <ul>
+    <li>Workouts — type, start and end time, duration, calories, average heart rate, distance</li>
+    <li>Sleep — bedtime, wake time, and time asleep</li>
+    <li>Daily health metrics — resting heart rate, heart rate variability, and recovery score</li>
+    <li>The access and refresh tokens needed to keep reading that data</li>
+  </ul>
+  <p>
+    We request <strong>read-only</strong> access. We never write to or modify anything in your wearable
+    account, and we <strong>do not request GPS or location data</strong>.
+  </p>
+  <p>
+    <strong>Wearable data is never sent to Gemini or to any AI service.</strong>
+    It is used only to display your activity in your group and on your group's stats page.
+  </p>
+
+  <h3>Calorie mode, if you use it</h3>
+  <ul>
+    <li>Meals you log, with calories and macronutrients</li>
+    <li>Weight entries</li>
+    <li>Sex, age, height, weight, activity level and goal, which you enter yourself so daily targets can be calculated</li>
+  </ul>
+
+  <h2>2. How we use it</h2>
+  <ul>
+    <li>Record check-ins and reply in the chat</li>
+    <li>Report who has and has not worked out today, and send the 22:00 reminder</li>
+    <li>Calculate standings, streaks and historical stats for the group</li>
+    <li>Render your group's stats page</li>
+    <li>Calculate calorie and protein targets and suggest meals (calorie mode only)</li>
+  </ul>
+  <p>
+    We do not use your data for advertising, and we do not sell, rent or trade it. It is not shared with
+    anyone beyond the service providers listed in section 4.
+  </p>
+  <p>
+    Health data obtained through the Google Health API is used solely to provide user-facing features.
+    It is not used for advertising, not sold, and not used to train AI models. No human reads it except
+    where you ask for support, or where the law requires it.
+  </p>
+
+  <h2>3. Who can see your data</h2>
+  <div class="notice">
+    <p><strong>Understand this before joining:</strong> the challenge is built around visibility within the group.</p>
+    <p>Your name, whether you have worked out today, the activity, the figures logged, and your historical
+      stats are <strong>visible to every other member of the same LINE group</strong>, including when the bot
+      @-mentions you in the 22:00 reminder.</p>
+    <p>If you connect a wearable, your sleep and recovery figures appear in that same group.</p>
+  </div>
+  <p>
+    Each group has its own stats page reached through a secret link unique to that group.
+    <strong>One group cannot open another group's data.</strong> Anyone holding a group's link can view
+    that group's data, so if a link leaks, type <code>ลิงก์ใหม่</code> in the group to invalidate it immediately.
+  </p>
+
+  <h2>4. Service providers</h2>
+  <table>
+    <thead><tr><th>Provider</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>LINE Corporation</td><td>Delivers messages, images and display names</td></tr>
+      <tr><td>Cloudflare</td><td>Runs the service and stores the database (Workers and D1)</td></tr>
+      <tr><td>Google (Gemini API)</td><td>Reads figures from images and text · never receives wearable data</td></tr>
+      <tr><td>Google (Health API)</td><td>Source of Fitbit data, only if you connect your account</td></tr>
+      <tr><td>WHOOP</td><td>Source of WHOOP data, only if you connect your account</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5. Retention and security</h2>
+  <ul>
+    <li>Data is stored in a Cloudflare D1 database and all connections use HTTPS</li>
+    <li>Wearable tokens are encrypted before being written to the database</li>
+    <li>Every request from LINE has its signature verified before it is processed</li>
+    <li>Stats pages open only for someone holding the group's secret link, or the administrator key</li>
+  </ul>
+  <p>
+    We keep your data for as long as you use the Service. There is no automatic time-based deletion,
+    because the historical record is the main thing the Service is for.
+  </p>
+
+  <h2>6. Your rights and how to delete data</h2>
+  <p>You can do these yourself, immediately, in the chat:</p>
+  <ul>
+    <li>Type <code>ลบ</code> to delete your most recent check-in</li>
+    <li>Type <code>ออกจากชาเลนจ์</code> to leave the challenge</li>
+    <li>Type <code>ล้างวันนี้</code> to clear today's food entries (calorie mode)</li>
+  </ul>
+  <p>You can disconnect a wearable at its source at any time:</p>
+  <ul>
+    <li>WHOOP — in the WHOOP app or website, under connected applications</li>
+    <li>Fitbit / Google — at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a></li>
+  </ul>
+  <p>
+    Revoking access stops all further reads immediately. If you also want the data already retrieved to be
+    erased, contact us using section 9.
+  </p>
+  <p>
+    Under Thailand's Personal Data Protection Act B.E. 2562 (PDPA) you have the right to access, correct,
+    obtain a copy of, object to the processing of, and request deletion of your personal data.
+    Contact us using section 9.
+  </p>
+
+  <h2>7. Children</h2>
+  <p>The Service is not intended for children under 13, and we do not knowingly collect data from them.</p>
+
+  <h2>8. Changes to this policy</h2>
+  <p>
+    If this policy changes we will update the effective date at the top of this page. Changes that
+    materially affect your data will be announced in the LINE groups where the bot is present.
+  </p>
+
+  <h2>9. Contact</h2>
+  <div class="notice">
+    <p><strong>⚠️ A real contact email must be filled in here before submitting the app for review.</strong></p>
+    <p>Replace this line with the address, e.g. <code>you@example.com</code></p>
+  </div>
+  <p>You can also message the Yes Cal official account directly on LINE.</p>
+</div>
+
+<footer>
+  <span>Yes Cal</span>
+  <a href="/">Home</a>
+  <a href="/terms">Terms of Service</a>
+</footer>
+</body>
+</html>

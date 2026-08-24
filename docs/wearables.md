@@ -135,6 +135,16 @@ https://yes-cal.sales-a5c.workers.dev/oauth/whoop/callback
 https://yes-cal.sales-a5c.workers.dev/oauth/google/callback
 ```
 
+URL ที่ฟอร์มขอ (ทำเสร็จแล้ว เสิร์ฟจาก worker เดียวกัน):
+
+```
+Homepage        https://yes-cal.sales-a5c.workers.dev/
+Privacy Policy  https://yes-cal.sales-a5c.workers.dev/privacy
+Terms of Service https://yes-cal.sales-a5c.workers.dev/terms
+```
+
+⚠️ **ต้องกรอกอีเมลติดต่อในหัวข้อ 9 ของหน้า privacy ก่อนส่งฟอร์ม** ตอนนี้ยังเป็นที่ว่างอยู่
+
 **Whoop** — developer.whoop.com → Dashboard → Create App
 ขอ scope: `read:workout` `read:sleep` `read:recovery` `read:profile`
 

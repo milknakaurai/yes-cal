@@ -334,8 +334,18 @@ check('ลิงก์เก่าใช้ไม่ได้แล้ว', oldL
 const newLink = await worker.fetch(new Request(`https://x/api/challenge?t=${rotated}`), env, ctx);
 check('ลิงก์ใหม่ใช้ได้', newLink.status === 200);
 
-const wk = await worker.fetch(new Request('https://x/workout'), env, ctx);
-check('/workout เสิร์ฟหน้าชาเลนจ์ได้', wk.status === 200);
+console.log('\n--- หน้าเว็บสาธารณะ ---');
+for (const [path, file] of [['/workout', 'workout.html'], ['/calories', 'calories.html'],
+                            ['/privacy', 'privacy.html'], ['/terms', 'terms.html']]) {
+  const r = await worker.fetch(new Request('https://x' + path), env, ctx);
+  const body = r.status === 200 ? await r.text() : '';
+  check(`${path} → ${file}`, r.status === 200 && body.includes(file));
+}
+// หน้าที่ Whoop/Google เอาไปโชว์ ต้องเปิดได้โดยไม่ต้องมีรหัสอะไรเลย
+for (const path of ['/privacy', '/terms']) {
+  const r = await worker.fetch(new Request('https://x' + path), env, ctx);
+  check(`${path} เปิดได้แบบไม่ต้องใส่ key`, r.status === 200);
+}
 
 if (failed) { console.error(`\n❌ เทสไม่ผ่าน ${failed} ข้อ`); process.exit(1); }
 console.log('\n✅ เทสผ่านหมด');

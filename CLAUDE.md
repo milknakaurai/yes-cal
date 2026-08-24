@@ -41,8 +41,16 @@ bash scripts/deploy.sh
 
 ## โครงสร้าง
 
+- `PRETTY_PATHS` ใน `src/index.js` — แม็ป `/workout` `/calories` `/privacy` `/terms` ไปหาไฟล์จริง
 - `src/index.js` — Worker ทั้งหมด: LINE webhook + Gemini + D1 + dashboard API (`/api/overview`) + cron 22:00 ไทย (15:00 UTC) เตือนกลุ่มชาเลนจ์
-- `public/index.html` — dashboard ฝั่งแคลอรี่ (`/`) ไม่มี dependency ภายนอก รองรับ dark mode
+- `public/index.html` — **หน้าเว็บสาธารณะ** (`/`) เน้นเรื่องบอทชาเลนจ์ ไม่ต้องใส่รหัส
+  มี `/privacy` กับ `/terms` คู่กัน — **จำเป็นต้องมี** เพราะ Whoop และ Google บังคับให้ใส่ URL สองอันนี้
+  ตอนขอสร้างแอป และเอาไปโชว์ในหน้าขอสิทธิ์ให้ผู้ใช้อ่าน ห้ามเอาออกหรือย้าย URL
+  สามหน้านี้ใช้ `public/site.css` + `public/site.js` ร่วมกัน สลับไทย/อังกฤษได้ (คนรีวิวแอปอ่านอังกฤษ)
+  **อย่าสลับภาษาด้วย `el.style.display = ""`** — มันตกกลับไปโดน `[data-lang] { display: none }` ใน CSS
+  ต้องใช้ attribute `data-active` บน `<html>` แล้วให้ CSS เป็นคนเปิด
+- `public/calories.html` — dashboard ฝั่งแคลอรี่ (`/calories` — ย้ายมาจาก `/` ตอนทำหน้าเว็บสาธารณะ)
+  ลิงก์เก่าแบบ `/?key=...` ยังใช้ได้ หน้าแรกจะ redirect ไป `/calories` ให้เอง
 - `public/workout.html` — dashboard ฝั่งชาเลนจ์ (`/workout`) กินข้อมูลจาก `/api/challenge`
   แยกหน้า/แยก URL ตามที่เจ้าของขอ กลุ่มไหนเปิดโหมดชาเลนจ์จะโผล่ในหน้านี้เอง
   ชื่อกลุ่มไม่ได้เก็บใน D1 — `groupName()` ถาม LINE `/group/{id}/summary` ตอนเปิดหน้า (ไม่กินโควตา push)

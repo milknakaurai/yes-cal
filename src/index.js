@@ -31,6 +31,13 @@ const ACTIVITY_LEVELS = [
 // ใช้ประกอบลิงก์หน้าสถิติตอนบอทตอบในแชท จะได้ไม่ต้อง hardcode โดเมน
 let PUBLIC_ORIGIN = "";
 
+const PRETTY_PATHS = {
+  "/workout": "/workout.html",
+  "/calories": "/calories.html",
+  "/privacy": "/privacy.html",
+  "/terms": "/terms.html",
+};
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -42,10 +49,10 @@ export default {
     if (url.pathname.startsWith("/api/")) {
       return handleApi(url, request, env);
     }
-    // /workout → หน้าชาเลนจ์ (ปกติ static assets จับให้อยู่แล้ว อันนี้กันเหนียว)
-    if (url.pathname === "/workout" || url.pathname === "/workout/") {
-      return env.ASSETS.fetch(new URL("/workout.html", url));
-    }
+    // path สวย ๆ → ไฟล์จริงใน public/ (ปกติ static assets จับให้อยู่แล้ว อันนี้กันเหนียว)
+    // /privacy กับ /terms ต้องเปิดได้แบบสาธารณะ เพราะ Whoop/Google เอาไปโชว์ในหน้าขอสิทธิ์
+    const page = PRETTY_PATHS[url.pathname.replace(/\/$/, "") || "/"];
+    if (page) return env.ASSETS.fetch(new URL(page, url));
     return new Response("Not found", { status: 404 });
   },
 

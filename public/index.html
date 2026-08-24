@@ -3,382 +3,187 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Yes Cal</title>
-<style>
-  :root {
-    color-scheme: light;
-    --page: #f9f9f7;
-    --surface-1: #fcfcfb;
-    --text-primary: #0b0b0b;
-    --text-secondary: #52514e;
-    --text-muted: #898781;
-    --grid: #e1e0d9;
-    --baseline: #c3c2b7;
-    --border: rgba(11,11,11,0.10);
-    --series-1: #2a78d6;
-    --series-2: #eb6834;
-    --series-3: #1baf7a;
-    --good-text: #006300;
-    --critical: #d03b3b;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      color-scheme: dark;
-      --page: #0d0d0d;
-      --surface-1: #1a1a19;
-      --text-primary: #ffffff;
-      --text-secondary: #c3c2b7;
-      --text-muted: #898781;
-      --grid: #2c2c2a;
-      --baseline: #383835;
-      --border: rgba(255,255,255,0.10);
-      --series-1: #3987e5;
-      --series-2: #d95926;
-      --series-3: #199e70;
-      --good-text: #0ca30c;
-      --critical: #d03b3b;
-    }
-  }
-  * { box-sizing: border-box; margin: 0; }
-  body {
-    background: var(--page);
-    color: var(--text-primary);
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    padding: 20px 16px 48px;
-    max-width: 960px;
-    margin: 0 auto;
-  }
-  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-  h1 { font-size: 22px; font-weight: 700; }
-  .date { color: var(--text-secondary); font-size: 14px; }
-  .navlink { margin-left: auto; font-size: 13px; color: var(--series-1); text-decoration: none; }
-  .navlink:hover { text-decoration: underline; }
-  h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-bottom: 14px; }
-  .card {
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
-  }
-  .person-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-  .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
-  .person-name { font-weight: 600; font-size: 14px; }
-  .goal-tag { color: var(--text-muted); font-size: 12px; }
-  .hero { font-size: 34px; font-weight: 700; line-height: 1.1; }
-  .hero small { font-size: 15px; font-weight: 400; color: var(--text-secondary); }
-  .remaining { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
-  .remaining .over { color: var(--critical); font-weight: 600; }
-  .remaining .under { color: var(--good-text); font-weight: 600; }
-  .meter { height: 8px; border-radius: 4px; background: var(--grid); margin: 12px 0 10px; overflow: hidden; }
-  .meter > div { height: 100%; border-radius: 4px; }
-  .macros { display: flex; gap: 14px; font-size: 12.5px; color: var(--text-secondary); }
-  .macros b { color: var(--text-primary); font-weight: 600; }
-  .chart-wrap { margin-top: 14px; }
-  .chart-title { font-size: 12.5px; color: var(--text-secondary); margin-bottom: 6px; }
-  svg { display: block; overflow: visible; }
-  .legend { display: flex; gap: 16px; font-size: 12.5px; color: var(--text-secondary); margin-bottom: 8px; }
-  .legend span { display: inline-flex; align-items: center; gap: 6px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-  th { text-align: left; color: var(--text-muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
-  td { padding: 7px 8px; border-bottom: 1px solid var(--grid); }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  th.num { text-align: right; }
-  .empty { color: var(--text-muted); font-size: 13.5px; padding: 12px 0; }
-  #tooltip {
-    position: fixed; pointer-events: none; z-index: 10; display: none;
-    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
-    padding: 7px 10px; font-size: 12.5px; box-shadow: 0 2px 10px rgba(0,0,0,0.12);
-    color: var(--text-primary); white-space: nowrap;
-  }
-  #tooltip .tl { color: var(--text-secondary); }
-  #keybox { max-width: 360px; margin: 80px auto; text-align: center; }
-  #keybox input {
-    width: 100%; padding: 10px 12px; font-size: 15px; border-radius: 8px;
-    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
-    margin: 12px 0;
-  }
-  #keybox button {
-    padding: 10px 24px; font-size: 15px; border-radius: 8px; border: none;
-    background: var(--series-1); color: #fff; cursor: pointer;
-  }
-  .note { color: var(--text-muted); font-size: 12px; margin-top: 18px; }
-</style>
+<title>Yes Cal — บอทชาเลนจ์ออกกำลังกายบน LINE</title>
+<meta name="description" content="Yes Cal is a LINE bot for group workout challenges: check in with a screenshot from your watch, see who has not worked out today, and keep a shared streak.">
+<link rel="stylesheet" href="/site.css">
+<script src="/site.js" defer></script>
 </head>
 <body>
-<div id="app"></div>
-<div id="tooltip"></div>
+
+<div class="topbar">
+  <a class="brand" href="/">Yes Cal 💪</a>
+  <nav>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+    <button type="button" id="langbtn">English</button>
+  </nav>
+</div>
+
+<!-- ================= ไทย ================= -->
+<div data-lang="th">
+  <h1>ชาเลนจ์ออกกำลังกายในกลุ่ม LINE ที่ไม่มีใครรอดสายตา</h1>
+  <p class="lede">
+    Yes Cal เป็นบอทในกลุ่ม LINE ส่งรูปหน้าจอนาฬิกาหรือแอปออกกำลังกายเข้ามา
+    บอทอ่านตัวเลขให้เอง เช็คอินให้ทันที แล้วทุกสี่ทุ่มจะประกาศว่าใครยังไม่ออก
+  </p>
+
+  <div class="cards">
+    <div class="card">
+      <h3>📸 เช็คอินจากรูป</h3>
+      <p>ส่งหน้าจอสรุปผลจากนาฬิกาหรือแอป บอทอ่านเวลา ระยะทาง แคลอรี่ ให้เอง ไม่ต้องพิมพ์</p>
+    </div>
+    <div class="card">
+      <h3>⏰ ทวงตอนสี่ทุ่ม</h3>
+      <p>ทุกวัน 22:00 บอทแท็กชื่อคนที่ยังไม่ออกกำลังกายในกลุ่ม เด้งแจ้งเตือนถึงตัว</p>
+    </div>
+    <div class="card">
+      <h3>🏆 อันดับกับสตรีค</h3>
+      <p>นับว่าใครออกกี่วันใน 7 วันล่าสุด ต่อเนื่องกี่วัน และสะสมมาแล้วเท่าไหร่</p>
+    </div>
+    <div class="card">
+      <h3>🔒 แต่ละกลุ่มแยกกัน</h3>
+      <p>ทุกกลุ่มมีหน้าสถิติและลิงก์ลับของตัวเอง กลุ่มอื่นเปิดดูข้อมูลกันไม่ได้</p>
+    </div>
+  </div>
+
+  <h2>ต้องมีตัวเลขเสมอ</h2>
+  <p>
+    ชาเลนจ์จะสนุกก็ต่อเมื่อทุกคนเล่นจริง Yes Cal เลยไม่รับเช็คอินลอย ๆ —
+    รูปยิม รูปรองเท้า เซลฟี่ หรือพิมพ์ว่า "ออกกำลังกายแล้ว" เฉย ๆ ไม่นับ
+  </p>
+  <p>
+    ต้องเป็นหน้าจอสรุปผลที่เห็นตัวเลขจริง หรือพิมพ์ให้มีจำนวน เช่น
+    <code>วิ่ง 5 กม.</code> <code>เล่นเวท 1 ชม.</code> <code>วิดพื้น 50 ครั้ง</code>
+    และบอทจะไม่เดาเวลาหรือแคลอรี่ให้ แสดงเฉพาะที่อ่านได้จริงเท่านั้น
+  </p>
+
+  <h2>เริ่มใช้ยังไง</h2>
+  <ol class="steps">
+    <li>เชิญ Yes Cal เข้ากลุ่ม LINE ของคุณ</li>
+    <li>พิมพ์ <code>ออกกำลังกาย</code> เพื่อเปิดโหมดชาเลนจ์</li>
+    <li>ทุกคนพิมพ์ <code>เข้าร่วม</code> คนละครั้ง</li>
+    <li>ออกกำลังกายเสร็จก็ส่งรูปหน้าจอเข้ามาได้เลย</li>
+  </ol>
+
+  <h2>คำสั่งที่ใช้บ่อย</h2>
+  <table>
+    <thead><tr><th>พิมพ์</th><th>ได้อะไร</th></tr></thead>
+    <tbody>
+      <tr><td><code>วันนี้</code></td><td>ดูว่าใครออกแล้ว ใครยังไม่ออก</td></tr>
+      <tr><td><code>อันดับ</code></td><td>ตารางคะแนน 7 วันล่าสุด</td></tr>
+      <tr><td><code>เตือน</code></td><td>แท็กคนที่ยังไม่ออกทันที ไม่ต้องรอสี่ทุ่ม</td></tr>
+      <tr><td><code>เว็บ</code></td><td>ลิงก์หน้าสถิติของกลุ่มนี้</td></tr>
+      <tr><td><code>เมื่อวาน</code></td><td>ย้ายรายการล่าสุดไปเป็นของเมื่อวาน</td></tr>
+      <tr><td><code>ลบ</code></td><td>ลบรายการเช็คอินของตัวเอง</td></tr>
+      <tr><td><code>คำสั่ง</code></td><td>ดูวิธีใช้ทั้งหมด</td></tr>
+    </tbody>
+  </table>
+
+  <h2>เชื่อมนาฬิกาโดยตรง</h2>
+  <p>
+    ถ้าใช้ WHOOP หรือ Fitbit เชื่อมบัญชีเข้ากับ Yes Cal ได้ เพื่อให้เช็คอินเกิดขึ้นเอง
+    ไม่ต้องส่งรูป และดูสรุปการนอนกับ recovery เทียบกันในกลุ่มได้
+    การเชื่อมต่อเป็นเรื่องสมัครใจ ยกเลิกเมื่อไหร่ก็ได้ — อ่านรายละเอียดที่
+    <a href="/privacy">นโยบายความเป็นส่วนตัว</a>
+  </p>
+
+  <div class="notice">
+    <p><strong>Yes Cal นับแคลอรี่ได้ด้วย</strong></p>
+    <p>อีกโหมดหนึ่งไว้บันทึกอาหารจากข้อความหรือรูป คำนวณเป้าแคลกับโปรตีนรายวัน และแนะนำเมนูให้พอดีกับที่เหลือของวัน</p>
+  </div>
+
+  <p class="meta">Yes Cal เป็นโปรเจกต์ส่วนตัว ใช้กันในกลุ่มเพื่อนและครอบครัว ไม่มีค่าใช้จ่าย ไม่มีโฆษณา</p>
+</div>
+
+<!-- ================= English ================= -->
+<div data-lang="en">
+  <h1>A group workout challenge that runs itself, inside LINE</h1>
+  <p class="lede">
+    Yes Cal is a bot for LINE group chats. Send a screenshot from your watch or fitness app and it
+    reads the numbers and checks you in. Every night at 22:00 it announces who has not worked out yet.
+  </p>
+
+  <div class="cards">
+    <div class="card">
+      <h3>📸 Check in from a screenshot</h3>
+      <p>Send your watch or app summary screen. The bot reads duration, distance and calories — no typing needed.</p>
+    </div>
+    <div class="card">
+      <h3>⏰ A nudge at 22:00</h3>
+      <p>Once a day the bot @-mentions everyone who has not logged a workout, so the reminder actually lands.</p>
+    </div>
+    <div class="card">
+      <h3>🏆 Streaks and standings</h3>
+      <p>Days active out of the last seven, current streak, and lifetime total for each member.</p>
+    </div>
+    <div class="card">
+      <h3>🔒 One group cannot see another</h3>
+      <p>Every group gets its own stats page behind its own secret link. Groups never see each other's data.</p>
+    </div>
+  </div>
+
+  <h2>Numbers required</h2>
+  <p>
+    A challenge only works if everyone plays it straight, so Yes Cal does not accept vague check-ins.
+    A gym photo, a picture of your shoes, a selfie, or simply typing "worked out" does not count.
+  </p>
+  <p>
+    It has to be a results screen with real figures, or text with an amount —
+    <code>ran 5 km</code>, <code>weights 1 hr</code>, <code>50 push-ups</code>.
+    The bot never estimates duration or calories on your behalf; it only shows what it could actually read.
+  </p>
+
+  <h2>Getting started</h2>
+  <ol class="steps">
+    <li>Invite Yes Cal into your LINE group</li>
+    <li>Type <code>ออกกำลังกาย</code> to switch the group into challenge mode</li>
+    <li>Everyone types <code>เข้าร่วม</code> once to join</li>
+    <li>Finish a workout, send the screenshot</li>
+  </ol>
+
+  <h2>Everyday commands</h2>
+  <table>
+    <thead><tr><th>Type</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td><code>วันนี้</code></td><td>Who has worked out today, and who has not</td></tr>
+      <tr><td><code>อันดับ</code></td><td>Standings for the last 7 days</td></tr>
+      <tr><td><code>เตือน</code></td><td>Nudge the stragglers now, without waiting for 22:00</td></tr>
+      <tr><td><code>เว็บ</code></td><td>The private stats link for this group</td></tr>
+      <tr><td><code>เมื่อวาน</code></td><td>Move your last check-in to yesterday</td></tr>
+      <tr><td><code>ลบ</code></td><td>Delete your own check-in</td></tr>
+      <tr><td><code>คำสั่ง</code></td><td>Full command list</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Connect a wearable</h2>
+  <p>
+    If you wear a WHOOP or a Fitbit you can connect the account to Yes Cal so check-ins happen
+    automatically, without sending a screenshot, and so the group can compare sleep and recovery.
+    Connecting is entirely optional and can be revoked at any time — see the
+    <a href="/privacy">Privacy Policy</a> for exactly what is read and stored.
+  </p>
+
+  <div class="notice">
+    <p><strong>Yes Cal also counts calories</strong></p>
+    <p>A second mode logs meals from text or photos, works out daily calorie and protein targets, and suggests dishes that fit what is left of the day.</p>
+  </div>
+
+  <p class="meta">Yes Cal is a personal project used by a small circle of friends and family. It is free and carries no advertising.</p>
+</div>
+
+<footer>
+  <span>Yes Cal</span>
+  <a href="/privacy">Privacy Policy</a>
+  <a href="/terms">Terms of Service</a>
+  <a href="/workout">Challenge dashboard</a>
+  <a href="/calories">Calorie dashboard</a>
+</footer>
 
 <script>
-const $app = document.getElementById("app");
-const $tip = document.getElementById("tooltip");
-const SERIES = ["--series-1", "--series-2", "--series-3"];
-let DATA = null;
-
-const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const fmt = (n) => Math.round(n).toLocaleString("en-US");
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-
-// เปิดด้วยลิงก์ ?key=... ได้เลย ไม่ต้องพิมพ์ (เก็บลง localStorage แล้วลบออกจาก URL กันหลุด)
-function keyFromUrl() {
-  const k = new URLSearchParams(location.search).get("key");
-  if (!k) return;
-  localStorage.setItem("yescal_key", k);
-  history.replaceState(null, "", location.pathname);
-}
-
-async function load() {
-  const key = localStorage.getItem("yescal_key") || "";
-  const res = await fetch("/api/overview?days=14" + (key ? "&key=" + encodeURIComponent(key) : ""));
-  if (res.status === 401) return renderKeyPrompt();
-  DATA = await res.json();
-  render();
-}
-
-function renderKeyPrompt() {
-  // ต้องเป็น <form> จริง ๆ มือถือถึงจะขึ้นปุ่ม Go บนคีย์บอร์ด และตัวจำรหัสผ่านถึงจะทำงาน
-  $app.innerHTML = `
-    <div id="keybox">
-      <h1>Yes Cal 🔒</h1>
-      <p class="date" style="margin-top:8px">ใส่รหัสผ่านหน้าเว็บ (DASHBOARD_KEY)</p>
-      <form id="keyform">
-        <input type="password" id="keyinput" name="password" autocomplete="current-password"
-               autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go">
-        <br><button type="submit" id="keybtn">เข้าดู</button>
-      </form>
-    </div>`;
-  const input = document.getElementById("keyinput");
-  document.getElementById("keyform").onsubmit = (e) => {
-    e.preventDefault();
-    localStorage.setItem("yescal_key", input.value.trim());
-    load();
-  };
-  // autofocus ไม่ทำงานกับ element ที่เพิ่งใส่ด้วย innerHTML — ต้องสั่ง focus เอง
-  input.focus();
-}
-
-function render() {
-  const { today, users } = DATA;
-  if (!users.length) {
-    $app.innerHTML = `<header><h1>Yes Cal 🍚</h1><a class="navlink" href="/workout">ไปหน้าชาเลนจ์ →</a></header>
-      <div class="card"><div class="empty">ยังไม่มีข้อมูล — เริ่มพิมพ์อาหารในกลุ่ม LINE ได้เลยครับ</div></div>`;
-    return;
+  // ลิงก์เก่าที่คั่นด้วย ?key= เคยเปิดหน้า dashboard แคลอรี่ที่ / — พาไปที่อยู่ใหม่ให้
+  if (new URLSearchParams(location.search).has("key")) {
+    location.replace("/calories" + location.search);
   }
-
-  let html = `<header><h1>Yes Cal 🍚</h1><span class="date">${thaiDate(today)}</span><a class="navlink" href="/workout">ไปหน้าชาเลนจ์ →</a></header>`;
-
-  // การ์ดสรุปวันนี้ของแต่ละคน
-  html += `<div class="cards">`;
-  users.forEach((u, i) => {
-    const color = `var(${SERIES[i % SERIES.length]})`;
-    const kcal = u.today.kcal || 0;
-    const target = u.target_kcal;
-    const pct = target ? Math.min(100, (kcal / target) * 100) : 0;
-    const over = target && kcal > target;
-    const goalTh = {
-      health: "สุขภาพทั่วไป", tone: "กระชับสัดส่วน", muscle: "สร้างกล้ามเนื้อ", fatloss: "ลดไขมัน/ลีน",
-      lose: "ลดน้ำหนัก", maintain: "รักษาน้ำหนัก", gain: "เพิ่มน้ำหนัก",
-    }[u.goal_type] || "";
-    html += `
-    <div class="card">
-      <div class="person-head">
-        <span class="swatch" style="background:${color}"></span>
-        <span class="person-name">${esc(u.name)}</span>
-        ${goalTh ? `<span class="goal-tag">${goalTh}</span>` : ""}
-      </div>
-      <div class="hero">${fmt(kcal)} <small>${target ? "/ " + fmt(target) + " kcal" : "kcal"}</small></div>
-      <div class="remaining">${
-        !target ? 'ยังไม่ได้ตั้งเป้า — พิมพ์ "ตั้งเป้า" ในไลน์'
-        : over ? `<span class="over">⚠ เกินเป้า ${fmt(kcal - target)} kcal</span>`
-        : `<span class="under">✓</span> เหลืออีก ${fmt(target - kcal)} kcal`
-      }</div>
-      ${target ? `<div class="meter"><div style="width:${pct}%;background:${color}"></div></div>` : ""}
-      <div class="macros">
-        <span>โปรตีน <b>${Math.round(u.today.protein_g)}${u.target_protein_g ? " / " + u.target_protein_g : ""}g</b>${
-          u.target_protein_g && u.today.protein_g >= u.target_protein_g ? " 💪" : ""}</span>
-        <span>คาร์บ <b>${Math.round(u.today.carb_g)}g</b></span>
-        <span>ไขมัน <b>${Math.round(u.today.fat_g)}g</b></span>
-      </div>
-      <div class="chart-wrap">
-        <div class="chart-title">14 วันล่าสุด (kcal/วัน)</div>
-        <div id="bars-${i}"></div>
-      </div>
-    </div>`;
-  });
-  html += `</div>`;
-
-  // กราฟน้ำหนัก
-  const hasWeights = users.some((u) => u.weights.length > 0);
-  html += `<div class="card" style="margin-bottom:14px">
-    <h2>น้ำหนักตัว (กก.)</h2>
-    ${hasWeights
-      ? `<div class="legend">${users.map((u, i) =>
-          `<span><span class="swatch" style="background:var(${SERIES[i % SERIES.length]})"></span>${esc(u.name)}</span>`).join("")}
-        </div><div id="weightchart"></div>`
-      : `<div class="empty">ยังไม่มีข้อมูลน้ำหนัก — พิมพ์ "น้ำหนัก 65.5" ในไลน์</div>`}
-  </div>`;
-
-  // ตารางมื้ออาหารวันนี้ (ทางเลือกอ่านแบบตารางของกราฟทั้งหมด)
-  html += `<div class="card"><h2>มื้ออาหารวันนี้</h2>`;
-  const allMeals = users.flatMap((u, i) => u.meals_today.map((m) => ({ ...m, who: u.name, i })));
-  if (allMeals.length) {
-    html += `<table><thead><tr><th>ใคร</th><th>เมนู</th><th class="num">kcal</th><th class="num">P</th><th class="num">C</th><th class="num">F</th></tr></thead><tbody>`;
-    for (const m of allMeals) {
-      html += `<tr>
-        <td><span class="swatch" style="background:var(${SERIES[m.i % SERIES.length]});display:inline-block;margin-right:6px"></span>${esc(m.who)}</td>
-        <td>${esc(m.name)}${m.source === "image" ? " 📷" : ""}</td>
-        <td class="num">${fmt(m.kcal)}</td>
-        <td class="num">${m.protein_g == null ? "–" : Math.round(m.protein_g)}</td>
-        <td class="num">${m.carb_g == null ? "–" : Math.round(m.carb_g)}</td>
-        <td class="num">${m.fat_g == null ? "–" : Math.round(m.fat_g)}</td>
-      </tr>`;
-    }
-    html += `</tbody></table>`;
-  } else {
-    html += `<div class="empty">วันนี้ยังไม่มีรายการ</div>`;
-  }
-  html += `</div>`;
-
-  html += `<div class="note">ตัวเลขแคลอรี่เป็นการประเมินจาก AI (คลาดเคลื่อนได้ ±20-30%) ใช้ดูแนวโน้ม ไม่ใช่คำแนะนำทางการแพทย์</div>`;
-
-  $app.innerHTML = html;
-  drawCharts();
-}
-
-function drawCharts() {
-  const { users } = DATA;
-  users.forEach((u, i) => drawBars(document.getElementById("bars-" + i), u, `var(${SERIES[i % SERIES.length]})`));
-  const wc = document.getElementById("weightchart");
-  if (wc) drawWeightChart(wc, users);
-}
-
-// ---- กราฟแท่ง 14 วัน ต่อคน ----
-function drawBars(el, u, color) {
-  if (!el) return;
-  const W = el.clientWidth || 280, H = 120;
-  const pad = { l: 6, r: 6, t: 14, b: 18 };
-  const data = u.daily;
-  const max = Math.max(u.target_kcal || 0, ...data.map((d) => d.kcal), 1) * 1.08;
-  const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
-  const bw = Math.max(4, iw / data.length - 2); // ช่องไฟ 2px ระหว่างแท่ง
-  const x = (j) => pad.l + (iw / data.length) * j + (iw / data.length - bw) / 2;
-  const y = (v) => pad.t + ih - (v / max) * ih;
-
-  let s = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="แคลอรี่รายวัน 14 วันของ ${esc(u.name)}">`;
-  // เส้นเป้าหมาย
-  if (u.target_kcal) {
-    const ty = y(u.target_kcal);
-    s += `<line x1="${pad.l}" x2="${W - pad.r}" y1="${ty}" y2="${ty}" stroke="var(--baseline)" stroke-dasharray="3 3" stroke-width="1"/>`;
-    s += `<text x="${W - pad.r}" y="${ty - 4}" text-anchor="end" font-size="10" fill="var(--text-muted)" stroke="var(--surface-1)" stroke-width="3" paint-order="stroke">เป้า ${fmt(u.target_kcal)}</text>`;
-  }
-  // แท่ง (ปลายบนโค้ง 3px ฐานติด baseline)
-  data.forEach((d, j) => {
-    const bx = x(j), by = y(d.kcal), bh = pad.t + ih - by;
-    if (d.kcal > 0) {
-      const r = Math.min(3, bh, bw / 2);
-      s += `<path d="M${bx},${by + r} a${r},${r} 0 0 1 ${r},-${r} h${bw - 2 * r} a${r},${r} 0 0 1 ${r},${r} v${bh - r} h${-bw} z" fill="${color}"/>`;
-    }
-    s += `<rect x="${bx - 1}" y="${pad.t}" width="${bw + 2}" height="${ih}" fill="transparent"
-      data-tip="${esc(thaiDateShort(d.date))}|${fmt(d.kcal)} kcal${u.target_kcal ? " / เป้า " + fmt(u.target_kcal) : ""}"/>`;
-    if (j === 0 || j === data.length - 1) {
-      s += `<text x="${bx + bw / 2}" y="${H - 5}" text-anchor="middle" font-size="9.5" fill="var(--text-muted)">${d.date.slice(8)}/${d.date.slice(5, 7)}</text>`;
-    }
-  });
-  s += `<line x1="${pad.l}" x2="${W - pad.r}" y1="${pad.t + ih}" y2="${pad.t + ih}" stroke="var(--baseline)" stroke-width="1"/>`;
-  s += `</svg>`;
-  el.innerHTML = s;
-  bindTips(el);
-}
-
-// ---- กราฟเส้นน้ำหนัก 2 คน ----
-function drawWeightChart(el, users) {
-  const W = el.clientWidth || 600, H = 200;
-  const pad = { l: 40, r: 70, t: 10, b: 22 };
-  const series = users
-    .map((u, i) => ({ name: u.name, color: `var(${SERIES[i % SERIES.length]})`, pts: u.weights }))
-    .filter((s) => s.pts.length);
-  if (!series.length) return;
-
-  const allDates = [...new Set(series.flatMap((s) => s.pts.map((p) => p.date)))].sort();
-  const allW = series.flatMap((s) => s.pts.map((p) => p.weight_kg));
-  const lo = Math.floor(Math.min(...allW) - 1), hi = Math.ceil(Math.max(...allW) + 1);
-  const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
-  const xOf = (date) => allDates.length === 1 ? pad.l + iw / 2
-    : pad.l + (allDates.indexOf(date) / (allDates.length - 1)) * iw;
-  const yOf = (w) => pad.t + ih - ((w - lo) / (hi - lo)) * ih;
-
-  let s = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="กราฟน้ำหนักตัว">`;
-  // gridlines แนวนอนบาง ๆ
-  const steps = Math.min(4, hi - lo);
-  for (let g = 0; g <= steps; g++) {
-    const v = lo + ((hi - lo) / steps) * g, gy = yOf(v);
-    s += `<line x1="${pad.l}" x2="${W - pad.r}" y1="${gy}" y2="${gy}" stroke="var(--grid)" stroke-width="1"/>`;
-    s += `<text x="${pad.l - 6}" y="${gy + 3.5}" text-anchor="end" font-size="10" fill="var(--text-muted)">${Math.round(v * 10) / 10}</text>`;
-  }
-  for (const sr of series) {
-    const d = sr.pts.map((p, j) => `${j ? "L" : "M"}${xOf(p.date)},${yOf(p.weight_kg)}`).join("");
-    s += `<path d="${d}" fill="none" stroke="${sr.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-    for (const p of sr.pts) {
-      s += `<circle cx="${xOf(p.date)}" cy="${yOf(p.weight_kg)}" r="3.5" fill="${sr.color}" stroke="var(--surface-1)" stroke-width="2"/>`;
-      s += `<circle cx="${xOf(p.date)}" cy="${yOf(p.weight_kg)}" r="9" fill="transparent"
-        data-tip="${esc(sr.name)} · ${esc(thaiDateShort(p.date))}|${p.weight_kg} กก."/>`;
-    }
-    // direct label ปลายเส้น
-    const last = sr.pts[sr.pts.length - 1];
-    s += `<text x="${xOf(last.date) + 8}" y="${yOf(last.weight_kg) + 4}" font-size="11" fill="var(--text-secondary)">${esc(sr.name)} ${last.weight_kg}</text>`;
-  }
-  // แกนวันที่ ต้น-ปลาย
-  s += `<text x="${pad.l}" y="${H - 5}" font-size="10" fill="var(--text-muted)">${thaiDateShort(allDates[0])}</text>`;
-  if (allDates.length > 1)
-    s += `<text x="${W - pad.r}" y="${H - 5}" text-anchor="end" font-size="10" fill="var(--text-muted)">${thaiDateShort(allDates[allDates.length - 1])}</text>`;
-  s += `</svg>`;
-  el.innerHTML = s;
-  bindTips(el);
-}
-
-// ---- tooltip ----
-function bindTips(root) {
-  root.querySelectorAll("[data-tip]").forEach((n) => {
-    n.addEventListener("mouseenter", (e) => {
-      const [head, body] = n.getAttribute("data-tip").split("|");
-      $tip.innerHTML = `<div class="tl">${head}</div><div><b>${body}</b></div>`;
-      $tip.style.display = "block";
-      moveTip(e);
-    });
-    n.addEventListener("mousemove", moveTip);
-    n.addEventListener("mouseleave", () => ($tip.style.display = "none"));
-  });
-}
-function moveTip(e) {
-  const pad = 12;
-  let x = e.clientX + pad, y = e.clientY + pad;
-  const r = $tip.getBoundingClientRect();
-  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - pad;
-  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - pad;
-  $tip.style.left = x + "px";
-  $tip.style.top = y + "px";
-}
-
-// ---- dates ----
-const TH_MONTHS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
-function thaiDate(d) {
-  const [y, m, day] = d.split("-").map(Number);
-  return `${day} ${TH_MONTHS[m - 1]} ${y + 543}`;
-}
-function thaiDateShort(d) {
-  const [, m, day] = d.split("-").map(Number);
-  return `${day} ${TH_MONTHS[m - 1]}`;
-}
-
-// re-render ตอนย่อ/ขยายจอ (วัดความกว้างใหม่)
-let resizeTimer;
-addEventListener("resize", () => {
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => DATA && drawCharts(), 150);
-});
-
-keyFromUrl();
-load();
 </script>
 </body>
 </html>

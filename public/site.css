@@ -1,0 +1,107 @@
+/* สไตล์ร่วมของหน้าเว็บสาธารณะ (หน้าแรก / privacy / terms) */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --surface-2: #f2f1ec;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid: #e1e0d9;
+  --border: rgba(11,11,11,0.10);
+  --accent: #2a78d6;
+  --done: #1baf7a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --surface-2: #201f1e;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --border: rgba(255,255,255,0.10);
+    --accent: #3987e5;
+    --done: #199e70;
+  }
+}
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: var(--page);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.65;
+  padding: 0 16px 64px;
+  max-width: 780px;
+  margin: 0 auto;
+  overflow-wrap: break-word;
+}
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 18px 0; flex-wrap: wrap;
+}
+.brand { font-size: 18px; font-weight: 700; text-decoration: none; color: var(--text-primary); }
+.topbar nav { margin-left: auto; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.topbar nav a { font-size: 13.5px; color: var(--text-secondary); text-decoration: none; }
+.topbar nav a:hover { color: var(--accent); text-decoration: underline; }
+#langbtn {
+  font-size: 12.5px; padding: 4px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+}
+h1 { font-size: 30px; font-weight: 700; line-height: 1.25; margin: 22px 0 10px; }
+h2 { font-size: 19px; font-weight: 700; margin: 34px 0 10px; }
+h3 { font-size: 15.5px; font-weight: 600; margin: 20px 0 6px; }
+p { margin: 10px 0; color: var(--text-secondary); }
+.lede { font-size: 17px; color: var(--text-secondary); }
+ul, ol { margin: 10px 0; padding-left: 22px; color: var(--text-secondary); }
+li { margin: 5px 0; }
+a { color: var(--accent); }
+strong { color: var(--text-primary); }
+code {
+  background: var(--surface-2); padding: 1.5px 6px; border-radius: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em;
+  color: var(--text-primary);
+}
+.card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 12px; padding: 18px; margin: 16px 0;
+}
+/* 300px → จอกว้างได้ 2 คอลัมน์พอดี การ์ด 4 ใบเลยลงตัวเป็น 2×2 ไม่เหลือใบเดียวตกบรรทัด */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin: 18px 0; }
+.card h3 { margin-top: 0; }
+.card p:last-child { margin-bottom: 0; }
+.steps { counter-reset: s; list-style: none; padding: 0; }
+.steps li {
+  counter-increment: s; position: relative; padding-left: 38px; margin: 14px 0;
+  color: var(--text-secondary);
+}
+.steps li::before {
+  content: counter(s); position: absolute; left: 0; top: 1px;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  font-size: 13px; font-weight: 600; display: grid; place-items: center;
+}
+table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 14px 0; }
+th { text-align: left; color: var(--text-muted); font-weight: 500; font-size: 12.5px; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--grid); color: var(--text-secondary); vertical-align: top; }
+td:first-child { color: var(--text-primary); white-space: nowrap; }
+.meta { font-size: 13px; color: var(--text-muted); }
+.notice {
+  border-left: 3px solid var(--done); background: var(--surface-2);
+  padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0;
+}
+.notice p { margin: 4px 0; }
+footer {
+  margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--grid);
+  font-size: 13px; color: var(--text-muted);
+  display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+}
+footer a { color: var(--text-secondary); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+/* ซ่อนทุกภาษาไว้ก่อน แล้วเปิดเฉพาะภาษาที่เลือกผ่าน attribute บน <html>
+   (อย่าสลับด้วย element.style.display = "" — มันจะตกกลับมาโดน display:none ข้างล่างนี้) */
+[data-lang] { display: none; }
+html[data-active="th"] [data-lang="th"],
+html[data-active="en"] [data-lang="en"] { display: block; }
