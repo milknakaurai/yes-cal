@@ -782,6 +782,30 @@ check('เก็บคะแนนที่กรอกเองลงฐาน�
   db.prepare(`SELECT score FROM sleep_scores WHERE line_user_id='U_DM'`).get()?.score === 74);
 show('Milk พิมพ์ "คะแนนนอน 250" (นอกช่วง)', await send(dmEvent('U_DM', 'คะแนนนอน 250')));
 
+// แต่ละห้องต้องเห็นเฉพาะคนในห้องตัวเอง (เคสจริง 25 ส.ค.: กลุ่มครอบครัวเห็นการนอนของแฟน)
+{
+  db.prepare(`INSERT OR REPLACE INTO users (line_user_id, display_name, target_kcal, target_protein_g)
+              VALUES ('U_OTHER','คนกลุ่มอื่น', 2000, 120)`).run();
+  db.prepare(`INSERT INTO meals (line_user_id, name, kcal, protein_g, eaten_date)
+              VALUES ('U_OTHER','ข้าวผัด', 500, 20, ?)`).run(new Date(Date.now()+7*3600e3).toISOString().slice(0,10));
+  // U_OTHER คุยอยู่คนละห้อง ไม่เคยโผล่ในแชทของ U_DM
+  await send({ type: 'message', replyToken: 'rt', source: { type: 'user', userId: 'U_OTHER' },
+               message: { type: 'text', id: 'm-other', text: 'สวัสดี' } });
+
+  const mine = await send(dmEvent('U_DM', 'สรุป'));
+  check('สรุปไม่หลุดข้อมูลคนที่อยู่คนละห้อง', !mine[0].includes('คนกลุ่มอื่น'));
+  check('ยังเห็นของตัวเองปกติ', mine[0].includes('Milk'));
+
+  const week = await send(dmEvent('U_DM', 'สัปดาห์'));
+  check('สัปดาห์ก็ไม่หลุดเหมือนกัน', !week[0].includes('คนกลุ่มอื่น'));
+
+  // ห้องของ U_OTHER เองต้องเห็นของตัวเอง
+  const theirs = await send({ type: 'message', replyToken: 'rt', source: { type: 'user', userId: 'U_OTHER' },
+                              message: { type: 'text', id: 'm-other2', text: 'สรุป' } });
+  check('ห้องของเขาเห็นของเขาเอง', theirs[0].includes('คนกลุ่มอื่น'));
+  check('และไม่เห็นของเรา', !theirs[0].includes('Milk'));
+}
+
 // "วันนี้" ในโหมดแคลอรี่ต้องได้สรุป ไม่ใช่เงียบ (เคสจริงกลุ่ม MCL FOOD 24 ส.ค.)
 const calToday = await send(dmEvent('U_DM', 'วันนี้'));
 show('Milk พิมพ์ "วันนี้" ในแชทโหมดแคลอรี่', calToday);

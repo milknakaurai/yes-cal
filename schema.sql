@@ -48,6 +48,17 @@ CREATE TABLE IF NOT EXISTS chat_targets (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- ใครเคยคุยในห้องไหน — โหมดแคลอรี่ไม่มีการ "สมัคร" แบบชาเลนจ์
+-- ถ้าไม่เก็บ จะไม่มีทางรู้ว่าใครอยู่กลุ่มไหน แล้วทุกกลุ่มจะเห็นข้อมูลกันหมด
+-- worker สร้างตารางนี้ให้เองตอนใช้งานครั้งแรก (ensureChatPeople)
+CREATE TABLE IF NOT EXISTS chat_people (
+  chat_id TEXT NOT NULL,
+  line_user_id TEXT NOT NULL,
+  first_seen TEXT DEFAULT (datetime('now')),
+  last_seen TEXT,
+  PRIMARY KEY (chat_id, line_user_id)
+);
+
 -- ============ โหมดชาเลนจ์ออกกำลังกาย (workout challenge) ============
 -- กลุ่มไหนพิมพ์ "โหมดชาเลนจ์" จะสลับมาโหมดนี้ (เก็บใน chat_targets.mode)
 

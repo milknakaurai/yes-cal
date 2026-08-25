@@ -132,6 +132,7 @@ async function handleEvent(event, env) {
   const chatId = event.source.groupId || event.source.roomId || userId;
   const text = event.message.type === "text" ? event.message.text.trim() : "";
   const mode = await getChatMode(env, chatId);
+  await rememberPerson(env, chatId, userId);
 
   // คำสั่งเชื่อมนาฬิกาใช้ได้ทั้งสองโหมด เช็คก่อนแยกทาง
   const wearable = await handleWearableCommand(env, event, userId, chatId, text);
@@ -155,7 +156,7 @@ async function handleEvent(event, env) {
     return handleImageMessage(event, env, userId);
   }
   if (event.message.type === "text") {
-    return handleTextMessage(event, env, userId);
+    return handleTextMessage(event, env, userId, chatId);
   }
 }
 
@@ -170,7 +171,7 @@ async function rememberChatTarget(env, source) {
 
 // ---------------------------------------------------------------- text commands
 
-async function handleTextMessage(event, env, userId) {
+async function handleTextMessage(event, env, userId, chatId) {
   const text = event.message.text.trim();
   const user = await getOrCreateUser(env, userId, event.source);
 
@@ -192,8 +193,8 @@ async function handleTextMessage(event, env, userId) {
   if (proteinGoalMatch) return setProteinTarget(env, event, user, parseInt(proteinGoalMatch[1] || "0", 10));
   const suggest = text.match(/^(?:กินอะไรดี|กินไรดี|กินอะไรดีวันนี้|กินไรดีวันนี้|แนะนำเมนู|แนะนำอาหาร|เมนูแนะนำ)(?:\s+(.*))?$/);
   if (suggest) return replySuggestion(env, event, user, (suggest[1] || "").trim());
-  if (/^(สรุป|วันนี้)$/.test(text)) return replyTodaySummary(env, event);
-  if (/^(สัปดาห์|รายสัปดาห์)$/.test(text)) return replyWeekSummary(env, event);
+  if (/^(สรุป|วันนี้)$/.test(text)) return replyTodaySummary(env, event, chatId);
+  if (/^(สัปดาห์|รายสัปดาห์)$/.test(text)) return replyWeekSummary(env, event, chatId);
   if (/^(ลบล่าสุด|ลบ)$/.test(text)) return deleteLastMeal(env, event, user);
   if (/^(ล้างวันนี้|รีเซ็ตวันนี้|เริ่มใหม่วันนี้|ล้าง|รีเซ็ต|reset)$/i.test(text)) return clearToday(env, event, user);
 
@@ -661,8 +662,8 @@ async function logWeight(env, event, user, weight) {
 
 // ---------------------------------------------------------------- summaries
 
-async function replyTodaySummary(env, event) {
-  const users = await getAllUsers(env);
+async function replyTodaySummary(env, event, chatId) {
+  const users = await usersInChat(env, chatId);
   if (!users.length) return lineReply(env, event.replyToken, "ยังไม่มีใครบันทึกอะไรเลยครับ");
 
   const today = bkkToday();
@@ -680,8 +681,8 @@ async function replyTodaySummary(env, event) {
   return lineReply(env, event.replyToken, `สรุปวันนี้ 📊 (${today})\n\n${blocks.join("\n\n")}`);
 }
 
-async function replyWeekSummary(env, event) {
-  const users = await getAllUsers(env);
+async function replyWeekSummary(env, event, chatId) {
+  const users = await usersInChat(env, chatId);
   if (!users.length) return lineReply(env, event.replyToken, "ยังไม่มีข้อมูลครับ");
 
   const days = lastNDates(7);
@@ -714,19 +715,20 @@ async function pushNightlySummary(env) {
   const targets = (await env.DB.prepare(
     "SELECT id FROM chat_targets WHERE type IN ('group','room') AND COALESCE(mode,'calorie') = 'calorie'"
   ).all()).results;
-  const users = await getAllUsers(env);
-  if (!targets.length || !users.length) return;
-
+  if (!targets.length) return;
   const today = bkkToday();
-  const lines = ["สรุปประจำวัน 🌙 (" + today + ")", ""];
-  for (const u of users) {
-    const totals = await getDayTotals(env, u.line_user_id, today);
-    lines.push(statusLine(u, totals));
-    lines.push("");
-  }
-  lines.push("ยังกินต่อได้อีกนิดหน่อยก่อนนอนนะครับ 😄");
 
+  // สรุปของใครของมันรายห้อง — ห้ามรวมทุกคนในระบบส่งเข้าทุกกลุ่ม
   for (const t of targets) {
+    const users = await usersInChat(env, t.id);
+    if (!users.length) continue;
+    const lines = ["สรุปประจำวัน 🌙 (" + today + ")", ""];
+    for (const u of users) {
+      const totals = await getDayTotals(env, u.line_user_id, today);
+      lines.push(statusLine(u, totals));
+      lines.push("");
+    }
+    lines.push("ยังกินต่อได้อีกนิดหน่อยก่อนนอนนะครับ 😄");
     await linePush(env, t.id, lines.join("\n").trim()).catch((e) => console.error("push fail", e.message));
   }
 }
@@ -930,8 +932,42 @@ async function getOrCreateUser(env, userId, source) {
   return user;
 }
 
+// รายชื่อผู้ใช้ทั้งระบบ — ใช้เฉพาะหน้า dashboard ของเจ้าของเท่านั้น
+// **ห้ามเอาไปใช้ตอบในแชท** ตาราง users ไม่ได้ผูกกับห้อง ทุกกลุ่มจะเห็นข้อมูลกันหมด
 async function getAllUsers(env) {
   return (await env.DB.prepare("SELECT * FROM users ORDER BY created_at").all()).results;
+}
+
+// จำว่าใครเคยคุยในห้องไหน — โหมดแคลอรี่ไม่มีการ "สมัคร" แบบชาเลนจ์
+// จึงไม่มีทางรู้ว่าใครอยู่กลุ่มไหนถ้าไม่เก็บเอง (เจอจริง 25 ส.ค.: กลุ่มครอบครัวเห็นการนอนของแฟน)
+let chatPeopleReady = false;
+async function ensureChatPeople(env) {
+  if (chatPeopleReady) return;
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS chat_people (
+       chat_id TEXT NOT NULL, line_user_id TEXT NOT NULL,
+       first_seen TEXT DEFAULT (datetime('now')), last_seen TEXT,
+       PRIMARY KEY (chat_id, line_user_id))`
+  ).run();
+  chatPeopleReady = true;
+}
+
+async function rememberPerson(env, chatId, userId) {
+  await ensureChatPeople(env);
+  await env.DB.prepare(
+    `INSERT INTO chat_people (chat_id, line_user_id, last_seen) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(chat_id, line_user_id) DO UPDATE SET last_seen = datetime('now')`
+  ).bind(chatId, userId).run();
+}
+
+// เฉพาะคนที่เคยคุยในห้องนี้ ใช้ตอบทุกอย่างที่ส่งกลับเข้าแชท
+async function usersInChat(env, chatId) {
+  await ensureChatPeople(env);
+  return (await env.DB.prepare(
+    `SELECT u.* FROM users u
+       JOIN chat_people p ON p.line_user_id = u.line_user_id
+      WHERE p.chat_id = ? ORDER BY u.created_at`
+  ).bind(chatId).all()).results;
 }
 
 async function getDayTotals(env, userId, date) {
@@ -1173,9 +1209,7 @@ async function sleepAudience(env, chatId, userId) {
         `SELECT m.line_user_id, m.display_name FROM challenge_members m
           WHERE m.chat_id = ? AND m.active = 1 ORDER BY m.joined_at`
       ).bind(chatId).all()).results
-    : (await env.DB.prepare(
-        `SELECT line_user_id, display_name FROM users ORDER BY created_at`
-      ).all()).results;
+    : await usersInChat(env, chatId);
 
   const linked = (await env.DB.prepare(
     `SELECT DISTINCT line_user_id FROM device_links`
