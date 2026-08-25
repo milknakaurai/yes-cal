@@ -250,6 +250,42 @@ const tagChat = await send(textEvent('U_ERK', '@Yes Cal เก่งมากเ
   mention: { mentionees: [{ index: 0, length: 8, userId: 'U_BOT', type: 'user' }] } }));
 check('แท็กคุยเล่น → ตอบช่วยเหลือ ไม่บันทึก', tagChat[0]?.includes('เรียกผมเหรอครับ'));
 
+// บันทึกย้อนหลังหลายวัน ไม่ใช่แค่เมื่อวาน
+const dayAgo = (n) => new Date(Date.now() + 7 * 3600e3 - n * 86400e3).toISOString().slice(0, 10);
+CURRENT_NAME = 'Lek';
+geminiReply = { is_workout: true, activity: 'ตีกอล์ฟ', duration_min: 90, kcal: 400 };
+show('Lek พิมพ์ "3 วันที่แล้ว ตีกอล์ฟ 2 ถาด"', await send(textEvent('U_LEK', '3 วันที่แล้ว ตีกอล์ฟ 2 ถาด')));
+check('ย้อนหลัง 3 วันลงวันที่ถูก',
+  db.prepare(`SELECT logged_date FROM workouts WHERE line_user_id='U_LEK' ORDER BY id DESC LIMIT 1`).get()
+    ?.logged_date === dayAgo(3));
+
+geminiReply = { is_workout: true, activity: 'ว่ายน้ำ', duration_min: 30, kcal: 250 };
+await send(textEvent('U_LEK', 'เมื่อสองวันก่อนว่ายน้ำ 30 นาที'));
+check('เลขไทย "สองวันก่อน" ก็อ่านออก',
+  db.prepare(`SELECT logged_date FROM workouts WHERE line_user_id='U_LEK' ORDER BY id DESC LIMIT 1`).get()
+    ?.logged_date === dayAgo(2));
+
+geminiReply = { is_workout: true, activity: 'เล่นเวท', duration_min: 60, kcal: 300 };
+await send(textEvent('U_LEK', 'วานซืนเล่นเวท 1 ชม.'));
+check('"วานซืน" = 2 วันที่แล้ว',
+  db.prepare(`SELECT logged_date FROM workouts WHERE line_user_id='U_LEK' ORDER BY id DESC LIMIT 1`).get()
+    ?.logged_date === dayAgo(2));
+
+// เลขที่บอกวันต้องไม่ถูกนับเป็นปริมาณการออกกำลังกาย
+geminiReply = { is_workout: true, activity: 'วิ่ง', duration_min: 0, kcal: 0 };
+const vague = await send(textEvent('U_LEK', '3 วันที่แล้ววิ่ง'));
+show('Lek พิมพ์ "3 วันที่แล้ววิ่ง" (ไม่บอกว่าเท่าไหร่)', vague);
+check('เลขบอกวันไม่นับเป็นตัวเลขออกกำลังกาย',
+  !!vague[0] && !vague[0].includes('บันทึกย้อนหลัง'));
+
+// ย้ายรายการเก่าไปหลายวันก่อน
+geminiReply = { is_workout: true, activity: 'วิ่งลู่', duration_min: 40, kcal: 350 };
+await send(textEvent('U_LEK', 'วิ่งลู่ 40 นาที'));
+show('Lek พิมพ์ "4 วันที่แล้ว" เฉย ๆ (ย้ายรายการล่าสุด)', await send(textEvent('U_LEK', '4 วันที่แล้ว')));
+check('ย้ายรายการล่าสุดไป 4 วันที่แล้ว',
+  db.prepare(`SELECT logged_date FROM workouts WHERE line_user_id='U_LEK' AND activity='วิ่งลู่'`).get()
+    ?.logged_date === dayAgo(4));
+
 CURRENT_NAME = 'Milk';
 show('Milk พิมพ์ "เตือน" (แท็กคนที่ยังไม่ออก)', await send(textEvent('U_MILK', 'เตือน')));
 show('Milk พิมพ์ "อันดับ"', await send(textEvent('U_MILK', 'อันดับ')));

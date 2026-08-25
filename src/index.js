@@ -1755,17 +1755,17 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   }
   // บอกว่าเป็นของเมื่อวาน — ถ้าไม่มีรายละเอียดอื่น ถือว่าขอย้ายรายการล่าสุดย้อนหลัง
   // ถ้ามีรายละเอียดด้วย (เช่น "เมื่อวานวิ่ง 5 กม.") ให้บันทึกใหม่ลงวันเมื่อวานเลย
-  let dateOverride = null;
   const mentionees = event.message?.mention?.mentionees || [];
-  if (isBackdateOnly(stripMentions(text, mentionees))) {
+  const bare = stripMentions(text, mentionees);
+  const back = parseBackdate(bare);
+  if (isBackdateOnly(bare)) {
     return moveLastWorkoutBack(env, event, chatId, userId, {
+      days: back.days,
       quotedMessageId: event.message?.quotedMessageId || event.message?.quotedMessage?.id || null,
       mentionedIds: mentionees.map((m) => m.userId).filter(Boolean),
     });
   }
-  if (YESTERDAY_HINT.test(text) && looksLikeWorkout(text.replace(YESTERDAY_HINT, " "))) {
-    dateOverride = bkkDateOffset(-1);
-  }
+  const dateOverride = back.days && looksLikeWorkout(back.rest) ? bkkDateOffset(-back.days) : null;
 
   // ถูกแท็กชื่อบอทตรง ๆ ต้องตอบเสมอ (เงียบใส่คนที่เรียกหาดูเหมือนเมิน)
   const botId = await getBotUserId(env);
@@ -1788,7 +1788,8 @@ async function logWorkoutFromText(env, event, chatId, userId, text, dateOverride
 
   // ใช้มาตรฐานเดียวกับรูป: ต้องมีตัวเลขที่วัดได้ ไม่งั้นบอกอะไรก็เช็คอินได้หมด
   // ("วิ่ง 5 กม." ผ่าน · "วิดพื้น" ไม่ผ่าน) — นับรวมกรณีบอกเป็นคำ เช่น "ครึ่งชั่วโมง" ที่ AI ถอดเป็นนาทีให้
-  const hasAmount = /\d/.test(text) || result.duration_min > 0 || result.kcal > 0;
+  // ดูจากข้อความที่ตัด "3 วันที่แล้ว" ออกแล้ว เลขบอกวันไม่ใช่ปริมาณการออกกำลังกาย
+  const hasAmount = /\d/.test(parseBackdate(text).rest) || result.duration_min > 0 || result.kcal > 0;
   if (!hasAmount) {
     const name = await fetchDisplayName(env, event.source);
     return lineReply(env, event.replyToken,
@@ -1797,8 +1798,29 @@ async function logWorkoutFromText(env, event, chatId, userId, text, dateOverride
   return saveWorkoutAndReply(env, event, chatId, userId, result, "text", dateOverride);
 }
 
-// คำที่บอกว่ารายการนี้เป็นของเมื่อวาน (ส่งรูปย้อนหลัง / โพสต์ตอนเช้าแต่เล่นเมื่อคืน)
-const YESTERDAY_HINT = /เมื่อวาน(นี้)?|เมื่อคืน|วานนี้/;
+// คำที่บอกว่ารายการนี้เป็นของวันก่อน ๆ (ส่งรูปย้อนหลัง / เพิ่งนึกได้ว่าลืมบันทึก)
+// รองรับทั้ง "เมื่อวาน" "วานซืน" และ "3 วันที่แล้ว" / "เมื่อสองวันก่อน"
+const THAI_NUM = { หนึ่ง: 1, สอง: 2, สาม: 3, สี่: 4, ห้า: 5, หก: 6, เจ็ด: 7, แปด: 8, เก้า: 9, สิบ: 10 };
+const BACKDATE_RE = new RegExp(
+  "(เมื่อวานซืน|วานซืน|เมื่อวาน(?:นี้)?|เมื่อคืน(?:นี้)?|วานนี้" +
+  "|(?:เมื่อ\\s*)?(\\d{1,2}|" + Object.keys(THAI_NUM).join("|") + ")\\s*วัน(?:ที่)?(?:แล้ว|ก่อน))"
+);
+const YESTERDAY_HINT = BACKDATE_RE;
+
+// คืนจำนวนวันที่ย้อนหลัง (0 = ไม่ได้พูดถึงวันก่อน) พร้อมข้อความที่ตัดคำบอกวันออกแล้ว
+// ต้องตัดออกเพราะเลขใน "3 วันที่แล้ว" ไม่ใช่ปริมาณการออกกำลังกาย
+// ถ้าไม่ตัด "3 วันที่แล้ววิ่ง" จะผ่านด่าน "ต้องมีตัวเลข" ทั้งที่ไม่ได้บอกว่าวิ่งเท่าไหร่
+function parseBackdate(text) {
+  const m = String(text).match(BACKDATE_RE);
+  if (!m) return { days: 0, rest: text };
+  let days;
+  if (/ซืน/.test(m[1])) days = 2;
+  else if (m[2]) days = THAI_NUM[m[2]] ?? parseInt(m[2], 10);
+  else days = 1;
+  if (!Number.isFinite(days) || days < 1) return { days: 0, rest: text };
+  const rest = (text.slice(0, m.index) + " " + text.slice(m.index + m[0].length)).replace(/\s+/g, " ").trim();
+  return { days: Math.min(days, 14), rest }; // เกิน 14 วันไม่มีประโยชน์ สถิติย้อนหลังแค่ 14 วัน
+}
 // คำเติมที่ตัดทิ้งได้ ใช้ดูว่าข้อความนั้น "พูดถึงเมื่อวานเฉย ๆ" หรือมีเนื้อหาอื่นด้วย
 const FILLER = /อันนี้|อันนั้น|อันนี่|รูปนี้|ภาพนี้|คือ|นะ|น่ะ|ครับ|ค่ะ|คะ|จ้า|จ้ะ|รูป|ภาพ|ของ|เป็น|นี่|นั่น|ที่|ส่ง|โพสต์|แก้|จริง\s*ๆ|เมื่อ|วาน|คืน|[\s.!?]/g;
 
@@ -1823,8 +1845,9 @@ function stripMentions(text, mentionees) {
 // ข้อความแบบ "อันนี้คือเมื่อคืน" = ขอย้ายรายการล่าสุด
 // ส่วน "กินข้าวเมื่อวานอร่อยมาก" = คุยเล่น ต้องไม่ไปยุ่งกับข้อมูลใคร
 function isBackdateOnly(text) {
-  if (text.length > 40 || !YESTERDAY_HINT.test(text)) return false;
-  return text.replace(YESTERDAY_HINT, " ").replace(FILLER, "").trim() === "";
+  if (text.length > 40) return false;
+  const { days, rest } = parseBackdate(text);
+  return days > 0 && rest.replace(FILLER, "").trim() === "";
 }
 
 // คำที่บ่งชี้ว่าอาจเป็นการรายงานออกกำลังกาย (กรองหยาบ ๆ ก่อนถาม AI)
@@ -1887,7 +1910,7 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
 
   if (dateOverride) {
     return lineReply(env, event.replyToken, [
-      `บันทึกเป็นของเมื่อวาน (${thaiDateText(day)}) ให้แล้วครับ 📅`,
+      `บันทึกย้อนหลังเป็นของวันที่ ${thaiDateText(day)} ให้แล้วครับ 📅`,
       `${result.activity || "ออกกำลังกาย"}${detail ? " — " + detail : ""}`,
       "",
       "ของวันนี้ยังไม่นับนะ ออกแล้วส่งมาได้เลย 💪",
@@ -1980,8 +2003,8 @@ async function removeWorkoutRow(env, event, chatId, row) {
 // ถ้าไม่ได้ reply มา จะย้ายรายการล่าสุดของคนที่พิมพ์เอง
 async function moveLastWorkoutBack(env, event, chatId, userId, opts = {}) {
   const today = bkkToday();
-  const yesterday = bkkDateOffset(-1);
-  const { quotedMessageId = null, mentionedIds = [] } = opts;
+  const { days = 1, quotedMessageId = null, mentionedIds = [] } = opts;
+  const targetDate = bkkDateOffset(-Math.max(1, days));
 
   const latestOf = (uid) => env.DB.prepare(
     `SELECT w.id, w.activity, w.logged_date, m.display_name
@@ -2015,21 +2038,22 @@ async function moveLastWorkoutBack(env, event, chatId, userId, opts = {}) {
     return lineReply(env, event.replyToken,
       `ไม่เจอรายการให้ย้ายครับ 🤔\n\n` +
       `ถ้า reply ที่รูปแล้วไม่เจอ แปลว่ารูปนั้นเช็คอินไว้ก่อนที่ผมจะเริ่มจำรูปได้\n` +
-      `👉 ให้แท็กชื่อเจ้าตัวแทน: พิมพ์ @ แล้วเลือกชื่อ ตามด้วยคำว่า เมื่อวาน\n\n` +
-      `หรือบันทึกใหม่พร้อมรายละเอียดก็ได้ เช่น "เมื่อวานวิ่ง 5 กม."`);
+      `👉 ให้แท็กชื่อเจ้าตัวแทน: พิมพ์ @ แล้วเลือกชื่อ ตามด้วยคำบอกวัน\n\n` +
+      `หรือบันทึกใหม่พร้อมรายละเอียดก็ได้ เช่น "3 วันที่แล้ววิ่ง 5 กม."`);
   }
-  if (target.logged_date === yesterday) {
+  if (target.logged_date === targetDate) {
     return lineReply(env, event.replyToken,
-      `"${target.activity}" ของ ${target.display_name || "คนนี้"} อยู่ที่วันเมื่อวานอยู่แล้วครับ 👍`);
+      `"${target.activity}" ของ ${target.display_name || "คนนี้"} อยู่ที่วันที่ ${thaiDateText(targetDate)} อยู่แล้วครับ 👍`);
   }
 
   await env.DB.prepare("UPDATE workouts SET logged_date = ? WHERE id = ?")
-    .bind(yesterday, target.id).run();
+    .bind(targetDate, target.id).run();
 
   const { done, missing } = await getTodayStatus(env, chatId);
   const who = target.display_name ? `ของ ${target.display_name} ` : "";
+  const when = days === 1 ? "ของเมื่อวาน" : `ของ ${days} วันที่แล้ว`;
   return lineReply(env, event.replyToken, [
-    `ย้าย "${target.activity}" ${who}ไปเป็นของเมื่อวาน (${thaiDateText(yesterday)}) แล้วครับ 📅`,
+    `ย้าย "${target.activity}" ${who}ไปเป็น${when} (${thaiDateText(targetDate)}) แล้วครับ 📅`,
     "",
     missing.length
       ? `วันนี้เลยยังไม่นับ — เหลืออีก ${missing.length} คนที่ยังไม่ออก`
@@ -2221,8 +2245,16 @@ async function replyWhenTagged(env, event, chatId, userId, restText) {
   // ("@Yes Cal เมื่อวานเดิน 5 km + ไดร์ฟกอล์ฟ 700 แคล" ต้องจบที่เช็คอิน ไม่ใช่ตอบงง)
   if (restText && restText.length <= 120 && !isVagueWorkoutWord(restText) &&
       (looksLikeWorkout(restText) || /\d/.test(restText))) {
-    const dateOverride = YESTERDAY_HINT.test(restText) ? bkkDateOffset(-1) : null;
-    const logged = await logWorkoutFromText(env, event, chatId, userId, restText, dateOverride, true);
+    if (isBackdateOnly(restText)) {
+      return moveLastWorkoutBack(env, event, chatId, userId, {
+        days: parseBackdate(restText).days,
+        quotedMessageId: quotedId,
+        mentionedIds: (event.message?.mention?.mentionees || []).map((m) => m.userId).filter(Boolean),
+      });
+    }
+    const back = parseBackdate(restText);
+    const logged = await logWorkoutFromText(
+      env, event, chatId, userId, restText, back.days ? bkkDateOffset(-back.days) : null, true);
     if (logged !== null) return logged;
   }
 
@@ -2273,8 +2305,9 @@ function challengeHelpText() {
     "วันนี้ — ดูว่าใครออกแล้ว ใครยังไม่ออก",
     "สมาชิก — ดูรายชื่อคนที่เข้าร่วมทั้งหมด",
     "ลบ — ลบรายการเช็คอินของตัวเอง (แท็กชื่อ/reply เพื่อลบของเพื่อน)",
-    "เมื่อวาน — ย้ายรายการล่าสุดไปเป็นของเมื่อวาน",
-    "   (แท็กชื่อเพื่อน หรือ reply ที่รูปเขา แล้วพิมพ์ \"เมื่อวาน\" ก็แก้ให้เขาได้)",
+    "เมื่อวาน / วานซืน / 3 วันที่แล้ว — ย้ายรายการล่าสุดไปเป็นของวันนั้น",
+    "   (แท็กชื่อเพื่อน หรือ reply ที่รูปเขา แล้วพิมพ์คำบอกวัน ก็แก้ให้เขาได้)",
+    "   บันทึกย้อนหลังพร้อมรายละเอียดเลยก็ได้ เช่น \"3 วันที่แล้ววิ่ง 5 กม.\"",
     "เตือน — แท็กชื่อคนที่ยังไม่ออก (เด้งแจ้งเตือนถึงตัว)",
     "อันดับ — ตารางคะแนน 7 วันล่าสุด",
     "เว็บ — ลิงก์หน้าสถิติของกลุ่มนี้ (กลุ่มอื่นเปิดไม่ได้)",
