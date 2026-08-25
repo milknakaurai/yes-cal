@@ -286,6 +286,26 @@ check('ย้ายรายการล่าสุดไป 4 วันที�
   db.prepare(`SELECT logged_date FROM workouts WHERE line_user_id='U_LEK' AND activity='วิ่งลู่'`).get()
     ?.logged_date === dayAgo(4));
 
+// ย้ายรายการที่บันทึกไว้เมื่อวาน (เดิมมองแค่ของวันนี้ เลยหาไม่เจอ)
+{
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_LEK'`).run();
+  db.prepare(`INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, message_id, logged_date)
+              VALUES ('G1','U_LEK','ปั่นจักรยาน',45,300,'text','m-bike',?)`).run(dayAgo(1));
+  CURRENT_NAME = 'Lek';
+  show('Lek พิมพ์ "3 วันที่แล้ว" (รายการล่าสุดอยู่เมื่อวาน)', await send(textEvent('U_LEK', '3 วันที่แล้ว')));
+  check('ย้ายรายการของเมื่อวานได้ ไม่ใช่เฉพาะของวันนี้',
+    db.prepare(`SELECT logged_date FROM workouts WHERE message_id='m-bike'`).get()?.logged_date === dayAgo(3));
+}
+
+// reply ไปที่ข้อความที่ไม่เคยถูกเช็คอิน — ต้องบอกให้ชัดว่าทำไมไม่มีอะไรให้ย้าย (เคสจริง Erk 25 ส.ค.)
+{
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_LEK'`).run();
+  const out = await send(textEvent('U_LEK', '2 วันที่แล้ว', { quotedMessageId: 'ไม่เคยเช็คอิน' }));
+  show('Lek reply ที่ข้อความที่ไม่เคยเช็คอิน แล้วพิมพ์ "2 วันที่แล้ว"', out);
+  check('บอกว่าข้อความนั้นไม่เคยถูกเช็คอิน', out[0].includes('ไม่เคยถูกเช็คอิน'));
+  check('แนะนำวิธีที่ทำได้จริง', out[0].includes('2 วันที่แล้วเดิน 5 กม.'));
+}
+
 CURRENT_NAME = 'Milk';
 show('Milk พิมพ์ "เตือน" (แท็กคนที่ยังไม่ออก)', await send(textEvent('U_MILK', 'เตือน')));
 show('Milk พิมพ์ "อันดับ"', await send(textEvent('U_MILK', 'อันดับ')));

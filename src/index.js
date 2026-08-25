@@ -2042,13 +2042,16 @@ async function moveLastWorkoutBack(env, event, chatId, userId, opts = {}) {
   const { days = 1, quotedMessageId = null, mentionedIds = [] } = opts;
   const targetDate = bkkDateOffset(-Math.max(1, days));
 
+  // มองย้อนหลัง 7 วัน ไม่ใช่เฉพาะวันนี้ — คนมักนึกได้ทีหลังว่าลืมแก้วันของรายการเมื่อวาน
+  // เรียงวันล่าสุดก่อน ถ้ามีของวันนี้ก็ยังได้ของวันนี้เหมือนเดิม
+  const since = bkkDateOffset(-7);
   const latestOf = (uid) => env.DB.prepare(
     `SELECT w.id, w.activity, w.logged_date, m.display_name
      FROM workouts w LEFT JOIN challenge_members m
        ON m.chat_id = w.chat_id AND m.line_user_id = w.line_user_id
-     WHERE w.chat_id = ? AND w.line_user_id = ? AND w.logged_date = ?
-     ORDER BY w.id DESC LIMIT 1`
-  ).bind(chatId, uid, today).first();
+     WHERE w.chat_id = ? AND w.line_user_id = ? AND w.logged_date >= ?
+     ORDER BY w.logged_date DESC, w.id DESC LIMIT 1`
+  ).bind(chatId, uid, since).first();
 
   let target = null;
 
@@ -2071,11 +2074,19 @@ async function moveLastWorkoutBack(env, event, chatId, userId, opts = {}) {
   if (!target) target = await latestOf(userId);
 
   if (!target) {
-    return lineReply(env, event.replyToken,
-      `ไม่เจอรายการให้ย้ายครับ 🤔\n\n` +
-      `ถ้า reply ที่รูปแล้วไม่เจอ แปลว่ารูปนั้นเช็คอินไว้ก่อนที่ผมจะเริ่มจำรูปได้\n` +
-      `👉 ให้แท็กชื่อเจ้าตัวแทน: พิมพ์ @ แล้วเลือกชื่อ ตามด้วยคำบอกวัน\n\n` +
-      `หรือบันทึกใหม่พร้อมรายละเอียดก็ได้ เช่น "3 วันที่แล้ววิ่ง 5 กม."`);
+    // reply มาที่ข้อความที่ไม่เคยถูกเช็คอิน (เช่นข้อความที่ผมตอบว่าไม่เข้าใจ) ก็จะมาตกตรงนี้
+    // LINE ไม่ให้อ่านเนื้อหาข้อความที่ถูก reply เลยเดาแทนไม่ได้ ต้องให้พิมพ์ใหม่
+    const hint = quotedMessageId
+      ? `ข้อความที่ reply ไปไม่เคยถูกเช็คอินไว้ เลยไม่มีอะไรให้ย้ายครับ`
+      : `ไม่เจอรายการของคุณใน 7 วันที่ผ่านมา`;
+    return lineReply(env, event.replyToken, [
+      `${hint} 🤔`,
+      "",
+      `วิธีที่ง่ายที่สุดคือพิมพ์ใหม่ทีเดียวจบ พร้อมวันและตัวเลข เช่น`,
+      `  "2 วันที่แล้วเดิน 5 กม. + ไดร์ฟกอล์ฟ 700 แคล"`,
+      "",
+      `ถ้าเป็นของเพื่อน ให้เจ้าตัวพิมพ์เอง หรือแท็กชื่อเขาแล้วตามด้วยคำบอกวัน`,
+    ].join("\n"));
   }
   if (target.logged_date === targetDate) {
     return lineReply(env, event.replyToken,
