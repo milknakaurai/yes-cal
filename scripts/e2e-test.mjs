@@ -298,6 +298,38 @@ check('ย้ายรายการล่าสุดไป 4 วันที�
     db.prepare(`SELECT logged_date FROM workouts WHERE message_id='m-bike'`).get()?.logged_date === dayAgo(3));
 }
 
+// แอดมินพิมพ์แทนเพื่อนที่ขี้เกียจ (เคสจริง Erk 25 ส.ค.)
+{
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_ERK'`).run();
+  CURRENT_NAME = 'Milk';
+  geminiReply = { is_workout: true, activity: 'เดิน + ไดร์ฟกอล์ฟ', duration_min: 60, kcal: 700 };
+  const t = '@Erk Sasin 2 วันที่แล้วเดิน 5 กม. + ไดร์ฟกอล์ฟ 700 แคล';
+  const onBehalf = await send(textEvent('U_MILK', t, {
+    mention: { mentionees: [{ index: 0, length: 10, userId: 'U_ERK', type: 'user' }] } }));
+  show('Milk แท็ก Erk + เล่าว่าเขาออกอะไร', onBehalf);
+  const saved = db.prepare(
+    `SELECT line_user_id, activity, kcal, logged_date FROM workouts ORDER BY id DESC LIMIT 1`).get();
+  check('บันทึกเป็นของ Erk ไม่ใช่ของคนพิมพ์', saved?.line_user_id === 'U_ERK');
+  check('ลงวันที่ตามที่บอก', saved?.logged_date === dayAgo(2));
+  check('เก็บตัวเลขครบ', saved?.kcal === 700);
+  check('บอกในกลุ่มว่าใครบันทึกแทน', onBehalf[0].includes('Milk บันทึกแทน'));
+
+  // ไม่มีตัวเลข = ไม่ผ่านเหมือนกับบันทึกให้ตัวเอง
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_ERK'`).run();
+  geminiReply = { is_workout: true, activity: 'วิ่ง', duration_min: 0, kcal: 0 };
+  const noAmount = await send(textEvent('U_MILK', '@Erk Sasin เมื่อวานวิ่ง', {
+    mention: { mentionees: [{ index: 0, length: 10, userId: 'U_ERK', type: 'user' }] } }));
+  check('บันทึกแทนก็ต้องมีตัวเลข', db.prepare(
+    `SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_ERK'`).get().n === 0);
+  check('ทวงตัวเลขโดยเรียกชื่อคนที่ถูกแท็ก', noAmount[0].includes('Erk Sasin'));
+
+  // แท็กคนที่ยังไม่เข้าร่วม
+  geminiReply = { is_workout: true, activity: 'วิ่ง', duration_min: 30, kcal: 250 };
+  const notMember = await send(textEvent('U_MILK', '@Nobody วิ่ง 5 กม.', {
+    mention: { mentionees: [{ index: 0, length: 7, userId: 'U_GHOST', type: 'user' }] } }));
+  check('แท็กคนที่ยังไม่เข้าร่วม → บอกให้สมัครก่อน', notMember[0].includes('ยังไม่ได้เข้าร่วม'));
+}
+
 // มีหลายรายการ = กำกวม ต้องไม่เดา (เคสจริง 25 ส.ค. เดาผิดไปย้ายบาสแทนเดิน)
 {
   db.prepare(`DELETE FROM workouts WHERE line_user_id='U_ERK'`).run();

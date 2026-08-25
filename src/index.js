@@ -1804,8 +1804,15 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   }
   const dateOverride = back.days && looksLikeWorkout(back.rest) ? bkkDateOffset(-back.days) : null;
 
-  // ถูกแท็กชื่อบอทตรง ๆ ต้องตอบเสมอ (เงียบใส่คนที่เรียกหาดูเหมือนเมิน)
   const botId = await getBotUserId(env);
+
+  // แท็กชื่อเพื่อนพร้อมเล่าว่าเขาออกอะไรมา = บันทึกแทนให้ (เพื่อนขี้เกียจพิมพ์เองก็ยังนับได้)
+  const onBehalf = mentionees.map((m) => m.userId).find((u) => u && u !== botId && u !== userId);
+  if (onBehalf && back.rest.length <= 120 && !isVagueWorkoutWord(back.rest) && looksLikeWorkout(back.rest)) {
+    return logForMember(env, event, chatId, userId, onBehalf, back.rest, dateOverride);
+  }
+
+  // ถูกแท็กชื่อบอทตรง ๆ ต้องตอบเสมอ (เงียบใส่คนที่เรียกหาดูเหมือนเมิน)
   if (botId && mentionees.some((m) => m.userId === botId)) {
     return replyWhenTagged(env, event, chatId, userId, stripMentions(text, mentionees));
   }
@@ -1814,6 +1821,35 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   if (text.length > 120 || !looksLikeWorkout(text)) return;
 
   return logWorkoutFromText(env, event, chatId, userId, text, dateOverride);
+}
+
+// บันทึกแทนเพื่อนที่ขี้เกียจพิมพ์เอง — แท็กชื่อเขาแล้วเล่าว่าเขาออกอะไรมา
+// ใช้มาตรฐานเดียวกับบันทึกให้ตัวเอง (ต้องมีตัวเลข) และบอกในข้อความว่าใครเป็นคนบันทึกให้
+async function logForMember(env, event, chatId, byUserId, forUserId, text, dateOverride) {
+  const member = await env.DB.prepare(
+    "SELECT display_name FROM challenge_members WHERE chat_id = ? AND line_user_id = ? AND active = 1"
+  ).bind(chatId, forUserId).first();
+  if (!member) {
+    return lineReply(env, event.replyToken,
+      'คนที่แท็กยังไม่ได้เข้าร่วมชาเลนจ์ครับ 🤔\nให้เจ้าตัวพิมพ์ "เข้าร่วม" ก่อน แล้วค่อยบันทึกแทนได้');
+  }
+
+  const result = await geminiWorkout(env, [{ text: workoutTextPrompt(text) }]);
+  if (result?.__quota) return lineReply(env, event.replyToken, quotaText());
+  if (!result?.is_workout) {
+    return lineReply(env, event.replyToken,
+      `ยังไม่เข้าใจว่า ${member.display_name} ออกอะไรมาครับ 🤔\n` +
+      `ลองบอกให้ชัดขึ้น เช่น "@${member.display_name} เมื่อวานวิ่ง 5 กม."`);
+  }
+
+  const hasAmount = /\d/.test(parseBackdate(text).rest) || result.duration_min > 0 || result.kcal > 0;
+  if (!hasAmount) {
+    return lineReply(env, event.replyToken,
+      J.pick(J.NEED_DETAIL)(member.display_name, String(result.activity || "ออกกำลังกาย").slice(0, 30)));
+  }
+
+  const byName = await fetchDisplayName(env, event.source);
+  return saveWorkoutAndReply(env, event, chatId, forUserId, result, "text", dateOverride, byName);
 }
 
 // วิเคราะห์ข้อความแล้วบันทึกเช็คอิน — ใช้ทั้งข้อความปกติและตอนถูกแท็ก
@@ -1914,7 +1950,7 @@ async function handleChallengeImage(env, event, chatId, userId) {
   return saveWorkoutAndReply(env, event, chatId, userId, result, "image");
 }
 
-async function saveWorkoutAndReply(env, event, chatId, userId, result, source, dateOverride = null) {
+async function saveWorkoutAndReply(env, event, chatId, userId, result, source, dateOverride = null, loggedBy = null) {
   const day = dateOverride || bkkToday();
   const name = await ensureMember(env, chatId, userId, event.source);
   const already = await env.DB.prepare(
@@ -1945,13 +1981,17 @@ async function saveWorkoutAndReply(env, event, chatId, userId, result, source, d
     result.kcal ? `${fmtNum(result.kcal)} kcal` : null,
   ].filter(Boolean).join(" · ");
 
+  // บันทึกแทนคนอื่นต้องบอกให้กลุ่มเห็นเสมอว่าใครเป็นคนบันทึก จะได้ไม่มีใครแอบลงให้เงียบ ๆ
+  const byLine = loggedBy ? `(${loggedBy} บันทึกแทน${name ? " " + name : ""})` : null;
+
   if (dateOverride) {
     return lineReply(env, event.replyToken, [
-      `บันทึกย้อนหลังเป็นของวันที่ ${thaiDateText(day)} ให้แล้วครับ 📅`,
+      `${name ? name + " — " : ""}บันทึกย้อนหลังเป็นของวันที่ ${thaiDateText(day)} ให้แล้วครับ 📅`,
       `${result.activity || "ออกกำลังกาย"}${detail ? " — " + detail : ""}`,
+      byLine,
       "",
       "ของวันนี้ยังไม่นับนะ ออกแล้วส่งมาได้เลย 💪",
-    ].join("\n")).then(rememberReplyId);
+    ].filter((l) => l !== null).join("\n")).then(rememberReplyId);
   }
 
   const streak = await getStreak(env, chatId, userId);
@@ -2416,6 +2456,8 @@ function challengeHelpText() {
     "ลบ — ลบรายการเช็คอินของตัวเอง (แท็กชื่อ/reply เพื่อลบของเพื่อน)",
     "เมื่อวาน / วานซืน / 3 วันที่แล้ว — ย้ายรายการไปเป็นของวันนั้น",
     "ย้ายกลับ — กู้คืนการย้ายวันที่ครั้งล่าสุด",
+    "@ชื่อเพื่อน + เล่าว่าเขาออกอะไร — บันทึกแทนเพื่อนได้ เช่น",
+    "   \"@Erk 2 วันที่แล้วเดิน 5 กม.\" (บอทจะบอกในกลุ่มว่าใครบันทึกให้)",
     "   (แท็กชื่อเพื่อน หรือ reply ที่รูปเขา แล้วพิมพ์คำบอกวัน ก็แก้ให้เขาได้)",
     "   บันทึกย้อนหลังพร้อมรายละเอียดเลยก็ได้ เช่น \"3 วันที่แล้ววิ่ง 5 กม.\"",
     "เตือน — แท็กชื่อคนที่ยังไม่ออก (เด้งแจ้งเตือนถึงตัว)",
