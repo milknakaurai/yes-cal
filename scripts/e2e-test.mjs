@@ -939,6 +939,77 @@ check('ฝั่ง Google ที่ไม่มี strain ใช้เวลา
   WN.countsAsCheckin({ sport: 'walking', scored: true, duration_min: 25, strain: null }).ok === true &&
   WN.countsAsCheckin({ sport: 'walking', scored: true, duration_min: 5, strain: null }).ok === false);
 
+// ---- แชร์นาฬิกาเป็นรายห้อง ----
+// สองเคสจริงวันที่ 25 ส.ค.
+//   "ของแม่ไม่โชว์"  = แม่เชื่อมนาฬิกาแต่ไม่เคยพิมพ์ "ตั้งเป้า" เลยไม่มีแถวใน users แล้วถูกกรองทิ้ง
+//   "ยกเลิกการเชื่อมจากกลุ่มครอบครัว กลุ่มแฟนต้องไม่ยกเลิก"
+console.log('\n--- แชร์นาฬิกาเป็นรายห้อง ---');
+{
+  const linkOf = (out) => (out[0] || '').match(/connect\?t=([a-f0-9]+)/)?.[1] || null;
+  const finish = async (token) => {
+    const st = new URL((await worker.fetch(new Request(`https://x/oauth/whoop/start?t=${token}`), env, ctx))
+      .headers.get('location')).searchParams.get('state');
+    await worker.fetch(new Request(`https://x/oauth/whoop/callback?code=C_MOM&state=${st}`), env, ctx);
+  };
+  const linkedRows = (u) =>
+    db.prepare(`SELECT COUNT(*) AS n FROM device_links WHERE line_user_id=?`).get(u).n;
+
+  // แม่คุยในกลุ่มครอบครัวครั้งแรก — บอทต้องจำชื่อไว้เอง ไม่ต้องรอให้ตั้งเป้า
+  CURRENT_NAME = 'แม่';
+  const momLink = linkOf(await send(textEventIn('G_FAM', 'U_MOM', 'เชื่อมนาฬิกา')));
+  check('แม่ได้ลิงก์ผูกบัญชี', !!momLink);
+  await finish(momLink);
+  check('แม่ไม่มีแถวใน users (ไม่เคยตั้งเป้า)',
+    !db.prepare(`SELECT 1 AS x FROM users WHERE line_user_id='U_MOM'`).get());
+  check('เก็บชื่อแม่ไว้ใน chat_people แทน',
+    db.prepare(`SELECT display_name AS n FROM chat_people WHERE chat_id='G_FAM' AND line_user_id='U_MOM'`).get()?.n === 'แม่');
+
+  CURRENT_NAME = 'ลูก';
+  const famSleep = await send(textEventIn('G_FAM', 'U_KID', 'นอน'));
+  show('พิมพ์ "นอน" ในกลุ่มครอบครัว', famSleep);
+  check('แม่โผล่ในสรุปการนอนถึงจะไม่เคยตั้งเป้า', famSleep.join('\n').includes('แม่'));
+
+  // แม่เปิดแชร์ให้กลุ่มแฟนด้วย — เชื่อมไว้แล้วจึงไม่ต้องขอสิทธิ์ใหม่ทั้งรอบ
+  CURRENT_NAME = 'แม่';
+  const again = await send(textEventIn('G_GF', 'U_MOM', 'เชื่อมนาฬิกา'));
+  show('แม่พิมพ์ "เชื่อมนาฬิกา" ในอีกกลุ่ม (เชื่อมไว้อยู่แล้ว)', again);
+  check('เชื่อมไว้แล้ว → เปิดแชร์ให้ห้องใหม่เลย ไม่ต้องส่งลิงก์อีก', !linkOf(again));
+  check('แชร์ไว้ 2 ห้อง',
+    db.prepare(`SELECT COUNT(*) AS n FROM device_shares WHERE line_user_id='U_MOM'`).get().n === 2);
+
+  // ตัดการเชื่อมต่อในกลุ่มครอบครัว — กลุ่มแฟนต้องไม่กระทบ
+  const cut = await send(textEventIn('G_FAM', 'U_MOM', 'ตัดการเชื่อมต่อ'));
+  show('แม่พิมพ์ "ตัดการเชื่อมต่อ" ในกลุ่มครอบครัว', cut);
+  check('โทเคนยังอยู่ ไม่ได้ถูกลบทิ้ง', linkedRows('U_MOM') === 1);
+  check('บอกว่าห้องอื่นยังใช้ได้ตามเดิม', cut.join('\n').includes('1 ห้อง'));
+  check('เหลือแชร์ห้องเดียว',
+    db.prepare(`SELECT chat_id AS c FROM device_shares WHERE line_user_id='U_MOM'`).get()?.c === 'G_GF');
+
+  CURRENT_NAME = 'ลูก';
+  const famAfter = await send(textEventIn('G_FAM', 'U_KID', 'นอน'));
+  check('กลุ่มครอบครัวไม่เห็นของแม่แล้ว', !famAfter.join('\n').includes('แม่'));
+  CURRENT_NAME = 'แฟน';
+  const gfAfter = await send(textEventIn('G_GF', 'U_GF', 'นอน'));
+  check('กลุ่มแฟนยังเห็นของแม่ตามเดิม', gfAfter.join('\n').includes('แม่'));
+
+  // สั่งเลิกทั้งหมดถึงจะลบโทเคนจริง
+  CURRENT_NAME = 'แม่';
+  show('แม่พิมพ์ "ตัดการเชื่อมต่อทั้งหมด"', await send(textEventIn('G_GF', 'U_MOM', 'ตัดการเชื่อมต่อทั้งหมด')));
+  check('ลบโทเคนออกจากระบบแล้ว', linkedRows('U_MOM') === 0);
+  check('ไม่เหลือห้องที่แชร์',
+    db.prepare(`SELECT COUNT(*) AS n FROM device_shares WHERE line_user_id='U_MOM'`).get().n === 0);
+  check('เลิกเองแล้วต้องไม่ถูกนับว่า "ยังเชื่อมไม่เสร็จ"',
+    !(await send(textEventIn('G_GF', 'U_GF', 'นอน'))).join('\n').includes('แม่'));
+
+  // กดลิงก์แล้วไม่กลับมา (เช่น Google ขึ้น Access blocked) ต้องมีคนบอก ไม่ใช่เงียบหาย
+  CURRENT_NAME = 'ป้า';
+  check('ป้าขอลิงก์แล้วยังไม่เชื่อมจบ', !!linkOf(await send(textEventIn('G_FAM', 'U_AUNT', 'เชื่อมนาฬิกา'))));
+  CURRENT_NAME = 'ลูก';
+  const withPending = await send(textEventIn('G_FAM', 'U_KID', 'นอน'));
+  show('พิมพ์ "นอน" ตอนมีคนเชื่อมค้างอยู่', withPending);
+  check('บอกว่าใครกดลิงก์แล้วยังไม่สำเร็จ', withPending.join('\n').includes('ป้า'));
+}
+
 console.log('\n--- หน้าเว็บสาธารณะ ---');
 for (const [path, file] of [['/workout', 'workout.html'], ['/calories', 'calories.html'], ['/connect', 'connect.html'],
                             ['/privacy', 'privacy.html'], ['/terms', 'terms.html']]) {

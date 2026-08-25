@@ -132,7 +132,7 @@ async function handleEvent(event, env) {
   const chatId = event.source.groupId || event.source.roomId || userId;
   const text = event.message.type === "text" ? event.message.text.trim() : "";
   const mode = await getChatMode(env, chatId);
-  await rememberPerson(env, chatId, userId);
+  await rememberPerson(env, chatId, userId, event.source);
 
   // คำสั่งเชื่อมนาฬิกาใช้ได้ทั้งสองโหมด เช็คก่อนแยกทาง
   const wearable = await handleWearableCommand(env, event, userId, chatId, text);
@@ -904,7 +904,9 @@ async function getBotUserId(env) {
   return BOT_USER_ID;
 }
 
-async function fetchDisplayName(env, source) {
+// fallback = ค่าที่คืนเมื่อถามไม่สำเร็จ · ส่ง null มาถ้าอยากให้ผู้เรียกลองใหม่ทีหลัง
+// (อย่าเก็บ "เพื่อนใหม่" ลงฐานข้อมูล ไม่งั้นชื่อจริงจะไม่มีวันถูกเติม)
+async function fetchDisplayName(env, source, fallback = "เพื่อนใหม่") {
   const userId = source.userId;
   let url = `${LINE_API}/profile/${userId}`;
   if (source.type === "group") url = `${LINE_API}/group/${source.groupId}/member/${userId}`;
@@ -915,7 +917,7 @@ async function fetchDisplayName(env, source) {
     });
     if (res.ok) return (await res.json()).displayName;
   } catch {}
-  return "เพื่อนใหม่";
+  return fallback;
 }
 
 // ---------------------------------------------------------------- data helpers
@@ -945,19 +947,35 @@ async function ensureChatPeople(env) {
   if (chatPeopleReady) return;
   await env.DB.prepare(
     `CREATE TABLE IF NOT EXISTS chat_people (
-       chat_id TEXT NOT NULL, line_user_id TEXT NOT NULL,
+       chat_id TEXT NOT NULL, line_user_id TEXT NOT NULL, display_name TEXT,
        first_seen TEXT DEFAULT (datetime('now')), last_seen TEXT,
        PRIMARY KEY (chat_id, line_user_id))`
   ).run();
+  // ตารางรุ่นแรกไม่มีคอลัมน์ชื่อ — เติมให้ ถ้ามีแล้วจะ throw แล้วข้ามไป
+  try { await env.DB.prepare(`ALTER TABLE chat_people ADD COLUMN display_name TEXT`).run(); } catch {}
   chatPeopleReady = true;
 }
 
-async function rememberPerson(env, chatId, userId) {
+async function rememberPerson(env, chatId, userId, source) {
   await ensureChatPeople(env);
+  const seen = await env.DB.prepare(
+    `SELECT display_name FROM chat_people WHERE chat_id = ? AND line_user_id = ?`
+  ).bind(chatId, userId).first();
+
+  if (seen?.display_name) {
+    return env.DB.prepare(
+      `UPDATE chat_people SET last_seen = datetime('now') WHERE chat_id = ? AND line_user_id = ?`
+    ).bind(chatId, userId).run();
+  }
+
+  // ยังไม่รู้ชื่อ — ถาม LINE ครั้งเดียวตอนเห็นคนนี้ครั้งแรกในห้อง (ไม่กินโควตา push)
+  const name = source ? await fetchDisplayName(env, source, null) : null;
   await env.DB.prepare(
-    `INSERT INTO chat_people (chat_id, line_user_id, last_seen) VALUES (?, ?, datetime('now'))
-     ON CONFLICT(chat_id, line_user_id) DO UPDATE SET last_seen = datetime('now')`
-  ).bind(chatId, userId).run();
+    `INSERT INTO chat_people (chat_id, line_user_id, display_name, last_seen)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(chat_id, line_user_id) DO UPDATE SET last_seen = datetime('now'),
+       display_name = COALESCE(excluded.display_name, chat_people.display_name)`
+  ).bind(chatId, userId, name).run();
 }
 
 // เฉพาะคนที่เคยคุยในห้องนี้ ใช้ตอบทุกอย่างที่ส่งกลับเข้าแชท
@@ -967,6 +985,21 @@ async function usersInChat(env, chatId) {
     `SELECT u.* FROM users u
        JOIN chat_people p ON p.line_user_id = u.line_user_id
       WHERE p.chat_id = ? ORDER BY u.created_at`
+  ).bind(chatId).all()).results;
+}
+
+// ทุกคนที่เคยคุยในห้องนี้ ไม่ว่าจะเคยตั้งเป้าไว้หรือยัง
+// ใช้กับเรื่องที่ไม่ได้ผูกกับเป้าแคลอรี่ เช่น สรุปการนอน — usersInChat ใช้ไม่ได้
+// เพราะมัน JOIN users ทิ้งคนที่ไม่เคยพิมพ์ "ตั้งเป้า" ออกหมด
+// (เจอจริง 25 ส.ค.: แม่เชื่อมนาฬิกาแต่ไม่เคยตั้งเป้า เลยหายไปจากสรุปการนอน)
+async function chatMembers(env, chatId) {
+  await ensureChatPeople(env);
+  return (await env.DB.prepare(
+    `SELECT p.line_user_id,
+            COALESCE(u.display_name, p.display_name, 'สมาชิก') AS display_name
+       FROM chat_people p
+       LEFT JOIN users u ON u.line_user_id = p.line_user_id
+      WHERE p.chat_id = ? ORDER BY p.first_seen`
   ).bind(chatId).all()).results;
 }
 
@@ -997,9 +1030,11 @@ async function syncWearableCheckins(env) {
 
   let added = 0;
   for (const link of links) {
+    // เฉพาะกลุ่มที่เจ้าตัวเปิดแชร์นาฬิกาไว้ — เลิกแชร์แล้วต้องหยุดเช็คอินให้ด้วย
     const chats = (await env.DB.prepare(
       `SELECT m.chat_id FROM challenge_members m
          JOIN chat_targets t ON t.id = m.chat_id AND t.mode = 'challenge'
+         JOIN device_shares s ON s.chat_id = m.chat_id AND s.line_user_id = m.line_user_id
         WHERE m.line_user_id = ? AND m.active = 1`
     ).bind(link.line_user_id).all()).results;
     if (!chats.length) continue;
@@ -1089,7 +1124,8 @@ async function handleOAuth(url, env, provider, step) {
       return oauthPage("ลิงก์หมดอายุ",
         'ลิงก์ผูกบัญชีใช้ได้ 15 นาที พิมพ์ "เชื่อมนาฬิกา" ในแชทอีกครั้งเพื่อขอลิงก์ใหม่', false);
     }
-    const state = await W.createState(env, provider, link.line_user_id, link.chat_id);
+    const state = await W.createState(env, provider, link.line_user_id, link.chat_id,
+      url.searchParams.get("t"));
     return Response.redirect(W.buildAuthUrl(env, provider, url.origin, state), 302);
   }
 
@@ -1116,7 +1152,9 @@ async function handleOAuth(url, env, provider, step) {
       providerUserId: check.providerUserId,
       displayName: check.displayName,
     });
-    await W.consumeLinkToken(env, url.searchParams.get("t") || "");
+    // แชร์ให้เฉพาะห้องที่ขอลิงก์มา · ห้องอื่นต้องพิมพ์ "เชื่อมนาฬิกา" ในห้องนั้นเอง
+    await W.shareWithChat(env, claim.chat_id, claim.line_user_id);
+    await W.consumeLinkToken(env, claim.link_token || "");
 
     const label = W.PROVIDERS[provider].label;
     const warn = tokens.refresh_token
@@ -1159,6 +1197,17 @@ async function replyConnectLink(env, event, userId, chatId) {
     return lineReply(env, event.replyToken,
       "ยังเปิดใช้ไม่ได้ครับ ผู้ดูแลยังไม่ได้ตั้งค่าการเชื่อมนาฬิกาบนเซิร์ฟเวอร์");
   }
+
+  // เชื่อมไว้แล้วแต่ยังไม่ได้เปิดให้ห้องนี้เห็น — เปิดให้เลย ไม่ต้องไปขอสิทธิ์ใหม่ทั้งรอบ
+  const links = await W.listConnections(env, userId);
+  if (links.length && !(await W.isSharedWith(env, chatId, userId))) {
+    await W.shareWithChat(env, chatId, userId);
+    return lineReply(env, event.replyToken, [
+      `เปิดแชร์ ${links.map((l) => W.PROVIDERS[l.provider]?.label || l.provider).join(" + ")} ให้ห้องนี้แล้วครับ 🩶`,
+      'พิมพ์ "นอน" ดูสรุปได้เลย · เลิกแชร์เฉพาะห้องนี้พิมพ์ "ตัดการเชื่อมต่อ"',
+    ].join("\n"));
+  }
+
   const token = await W.createLinkToken(env, userId, chatId);
   return lineReply(env, event.replyToken, [
     "เชื่อมนาฬิกาเข้ากับ Yes Cal 🩶",
@@ -1169,7 +1218,7 @@ async function replyConnectLink(env, event, userId, chatId) {
   ].join("\n"));
 }
 
-async function replyDeviceStatus(env, event, userId) {
+async function replyDeviceStatus(env, event, userId, chatId) {
   const links = await W.listConnections(env, userId);
   if (!links.length) {
     return lineReply(env, event.replyToken,
@@ -1180,47 +1229,112 @@ async function replyDeviceStatus(env, event, userId) {
     lines.push(`✅ ${W.PROVIDERS[l.provider]?.label || l.provider}`);
     if (l.display_name) lines.push(`   บัญชี ${l.display_name}`);
   }
-  lines.push("", 'อยากเลิกเชื่อมพิมพ์ "ตัดการเชื่อมต่อ"');
+
+  // แชร์เป็นรายห้อง คนใช้ต้องรู้ว่าห้องที่กำลังพิมพ์อยู่เห็นข้อมูลหรือเปล่า
+  const chats = await W.chatsSharedWith(env, userId);
+  const here = chats.includes(chatId);
+  const others = chats.filter((c) => c !== chatId).length;
+  lines.push("", here ? "ห้องนี้เห็นข้อมูลอยู่" : "ห้องนี้ยังไม่เห็นข้อมูล");
+  if (others) lines.push(`อีก ${others} ห้องที่เปิดแชร์ไว้`);
+  lines.push(here
+    ? 'เลิกแชร์เฉพาะห้องนี้พิมพ์ "ตัดการเชื่อมต่อ"'
+    : 'เปิดให้ห้องนี้เห็นพิมพ์ "เชื่อมนาฬิกา"');
   return lineReply(env, event.replyToken, lines.join("\n"));
 }
 
-async function replyDisconnect(env, event, userId) {
+const REVOKE_HINT = [
+  "แนะนำให้ถอนสิทธิ์ที่ต้นทางด้วย เพื่อความสบายใจ:",
+  "WHOOP — ในแอป หัวข้อการเชื่อมต่อกับแอปอื่น",
+  "Google — myaccount.google.com/permissions",
+];
+
+// "ตัดการเชื่อมต่อ" = เลิกแชร์เฉพาะห้องที่พิมพ์
+// เจ้าของกำหนดไว้ว่ายกเลิกจากกลุ่มครอบครัวแล้วกลุ่มแฟนต้องไม่ยกเลิกตาม
+// ลบโทเคนทิ้งเฉพาะตอนไม่เหลือห้องไหนแชร์อยู่แล้ว หรือสั่ง "ตัดการเชื่อมต่อทั้งหมด"
+async function replyDisconnect(env, event, userId, chatId, all) {
   const links = await W.listConnections(env, userId);
   if (!links.length) {
     return lineReply(env, event.replyToken, "ไม่มีนาฬิกาที่เชื่อมไว้อยู่แล้วครับ");
   }
-  for (const l of links) await W.disconnect(env, userId, l.provider);
+
+  const dropAll = async () => {
+    for (const c of await W.chatsSharedWith(env, userId)) await W.unshareChat(env, c, userId);
+    await W.forgetConnectRequests(env, userId);
+    for (const l of links) await W.disconnect(env, userId, l.provider);
+  };
+
+  if (all) {
+    await dropAll();
+    return lineReply(env, event.replyToken,
+      ["ตัดการเชื่อมต่อทุกห้องแล้วครับ ลบโทเคนออกจากระบบเรียบร้อย", "", ...REVOKE_HINT].join("\n"));
+  }
+
+  if (!(await W.isSharedWith(env, chatId, userId))) {
+    return lineReply(env, event.replyToken, [
+      "ห้องนี้ไม่เห็นข้อมูลนาฬิกาอยู่แล้วครับ",
+      'อยากลบโทเคนออกจากระบบทั้งหมดพิมพ์ "ตัดการเชื่อมต่อทั้งหมด"',
+    ].join("\n"));
+  }
+
+  const left = await W.unshareChat(env, chatId, userId);
+  if (!left.length) {
+    await W.forgetConnectRequests(env, userId);
+    for (const l of links) await W.disconnect(env, userId, l.provider);
+    return lineReply(env, event.replyToken,
+      ["เลิกแชร์ห้องนี้แล้ว และไม่เหลือห้องไหนแชร์อยู่ จึงลบโทเคนออกจากระบบให้ด้วย", "",
+       ...REVOKE_HINT].join("\n"));
+  }
   return lineReply(env, event.replyToken, [
-    "ตัดการเชื่อมต่อแล้วครับ ลบโทเคนออกจากระบบเรียบร้อย",
+    "เลิกแชร์นาฬิกาในห้องนี้แล้วครับ",
+    `อีก ${left.length} ห้องที่เปิดแชร์ไว้ยังใช้งานได้ตามเดิม`,
     "",
-    "แนะนำให้ถอนสิทธิ์ที่ต้นทางด้วย เพื่อความสบายใจ:",
-    "WHOOP — ในแอป หัวข้อการเชื่อมต่อกับแอปอื่น",
-    "Google — myaccount.google.com/permissions",
+    'เปิดกลับพิมพ์ "เชื่อมนาฬิกา" · ลบโทเคนออกจากระบบทั้งหมดพิมพ์ "ตัดการเชื่อมต่อทั้งหมด"',
   ].join("\n"));
 }
 
 // คนที่ควรอยู่ในสรุปการนอนของแชทนี้
-// กลุ่มชาเลนจ์ = สมาชิกชาเลนจ์ · ที่อื่น = คนที่ตั้งเป้าไว้ (บ้านเดียวกัน)
-// ทั้งสองทางกรองเหลือเฉพาะคนที่เชื่อมนาฬิกาไว้จริง
-async function sleepAudience(env, chatId, userId) {
+// กลุ่มชาเลนจ์ = สมาชิกชาเลนจ์ · ที่อื่น = ทุกคนที่เคยคุยในห้องนี้
+// **อย่ากรองด้วยตาราง users** การเชื่อมนาฬิกาไม่ต้องตั้งเป้าก่อน คนที่ข้ามขั้นตอนนั้นจะหายไปเลย
+// (เจอจริง 25 ส.ค.: "ของแม่ไม่โชว์")
+async function chatRoster(env, chatId) {
   const mode = await getChatMode(env, chatId);
-  const rows = mode === "challenge"
-    ? (await env.DB.prepare(
-        `SELECT m.line_user_id, m.display_name FROM challenge_members m
-          WHERE m.chat_id = ? AND m.active = 1 ORDER BY m.joined_at`
-      ).bind(chatId).all()).results
-    : await usersInChat(env, chatId);
+  if (mode !== "challenge") return chatMembers(env, chatId);
 
-  const linked = (await env.DB.prepare(
-    `SELECT DISTINCT line_user_id FROM device_links`
-  ).all()).results.map((r) => r.line_user_id);
+  const members = (await env.DB.prepare(
+    `SELECT m.line_user_id, m.display_name FROM challenge_members m
+      WHERE m.chat_id = ? AND m.active = 1 ORDER BY m.joined_at`
+  ).bind(chatId).all()).results;
+  // คนที่คุยในกลุ่มแต่ยังไม่ได้กดเข้าร่วมชาเลนจ์ ก็ยังนับเป็นคนในห้อง
+  const seen = new Set(members.map((m) => m.line_user_id));
+  for (const p of await chatMembers(env, chatId)) {
+    if (!seen.has(p.line_user_id)) members.push(p);
+  }
+  return members;
+}
 
-  const out = rows.filter((r) => linked.includes(r.line_user_id));
-  // คนพิมพ์เองต้องอยู่ในลิสต์เสมอ ถึงจะยังไม่ได้ตั้งเป้าหรือยังไม่ได้เข้าร่วมชาเลนจ์
-  if (linked.includes(userId) && !out.some((r) => r.line_user_id === userId)) {
+async function sleepAudience(env, chatId, userId) {
+  const rows = await chatRoster(env, chatId);
+  // เชื่อมนาฬิกาไว้ "และ" เปิดให้ห้องนี้เห็น — เลิกแชร์ห้องเดียวไม่กระทบห้องอื่น
+  const shared = await W.sharedUsers(env, chatId);
+
+  const out = rows.filter((r) => shared.includes(r.line_user_id));
+  // ในแชทส่วนตัวกับบอท ข้อมูลของตัวเองต้องดูได้เสมอ ไม่ต้องกดแชร์ให้ห้องตัวเอง
+  if (chatId === userId && !out.some((r) => r.line_user_id === userId)
+      && (await W.listConnections(env, userId)).length) {
     out.unshift({ line_user_id: userId, display_name: "คุณ" });
   }
   return out;
+}
+
+// คนในห้องที่ขอลิงก์เชื่อมนาฬิกาไว้แล้วแต่ยังไม่มีนาฬิกาผูกอยู่จริง
+// = กดลิงก์แล้วไม่ได้กลับมา · ต้องบอกให้รู้ ไม่งั้นเงียบหายแบบไม่มีใครรู้ว่าพลาดตรงไหน
+async function pendingConnectNames(env, chatId, exclude) {
+  const ids = await W.pendingConnections(env, chatId);
+  const wanted = ids.filter((id) => !exclude.includes(id));
+  if (!wanted.length) return [];
+  const roster = await chatRoster(env, chatId);
+  return wanted.map((id) =>
+    roster.find((r) => r.line_user_id === id)?.display_name || "สมาชิก");
 }
 
 // 428 นาที → "7.08 hrs" ตามรูปแบบที่เจ้าของขอ
@@ -1261,9 +1375,18 @@ function sleepBlock(name, data) {
 
 async function replySleep(env, event, chatId, userId) {
   const people = await sleepAudience(env, chatId, userId);
+  const pending = await pendingConnectNames(env, chatId, people.map((p) => p.line_user_id));
+  const pendingNote = pending.length
+    ? ["", `${pending.join(" · ")} กดลิงก์เชื่อมนาฬิกาแล้วแต่ยังไม่สำเร็จ`,
+       'ลองพิมพ์ "เชื่อมนาฬิกา" ขอลิงก์ใหม่แล้วทำให้จบในหน้าของผู้ให้บริการอีกครั้ง']
+    : [];
+
   if (!people.length) {
-    return lineReply(env, event.replyToken,
-      'ยังไม่มีใครเชื่อมนาฬิกาไว้ครับ 😴\nพิมพ์ "เชื่อมนาฬิกา" เพื่อเริ่ม');
+    return lineReply(env, event.replyToken, [
+      "ยังไม่มีใครเชื่อมนาฬิกาไว้ครับ 😴",
+      'พิมพ์ "เชื่อมนาฬิกา" เพื่อเริ่ม',
+      ...pendingNote,
+    ].join("\n"));
   }
 
   const results = await Promise.all(
@@ -1286,7 +1409,7 @@ async function replySleep(env, event, chatId, userId) {
        '  บอกคะแนนจริงจากแอปได้ด้วยการพิมพ์ "คะแนนนอน 74"']
     : [];
   return lineReply(env, event.replyToken,
-    ["สรุปการนอนคืนล่าสุด 😴", "", blocks.join("\n\n\n"), ...foot].join("\n"));
+    ["สรุปการนอนคืนล่าสุด 😴", "", blocks.join("\n\n\n"), ...foot, ...pendingNote].join("\n"));
 }
 
 // ผู้ใช้บอกคะแนนการนอนจริงจากแอปเอง เพื่อให้ Readiness แม่นขึ้น
@@ -1309,10 +1432,14 @@ async function handleWearableCommand(env, event, userId, chatId, text) {
     return { handled: true, promise: replyConnectLink(env, event, userId, chatId) };
   }
   if (/^(นาฬิกา|สถานะนาฬิกา)$/.test(text)) {
-    return { handled: true, promise: replyDeviceStatus(env, event, userId) };
+    return { handled: true, promise: replyDeviceStatus(env, event, userId, chatId) };
+  }
+  // เช็คแบบ "ทั้งหมด" ก่อน ไม่งั้นรูปแบบสั้นจะกินคำสั่งยาวไปก่อน
+  if (/^(ตัดการเชื่อมต่อ|ยกเลิกนาฬิกา|เลิกเชื่อมนาฬิกา|disconnect)\s*(ทั้งหมด|ทุกกลุ่ม|ทุกห้อง|all)$/i.test(text)) {
+    return { handled: true, promise: replyDisconnect(env, event, userId, chatId, true) };
   }
   if (/^(ตัดการเชื่อมต่อ|ยกเลิกนาฬิกา|เลิกเชื่อมนาฬิกา|disconnect)$/i.test(text)) {
-    return { handled: true, promise: replyDisconnect(env, event, userId) };
+    return { handled: true, promise: replyDisconnect(env, event, userId, chatId, false) };
   }
   if (/^(ซิงก์|ซิ้งค์|sync|ดึงข้อมูลนาฬิกา)$/i.test(text)) {
     return { handled: true, promise: replySync(env, event, chatId) };

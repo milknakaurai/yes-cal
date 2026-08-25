@@ -90,7 +90,21 @@ bash scripts/deploy.sh
   เคยใช้ประโยคสุ่มแล้วโดนติว่า "พูดเหมือนกันเกินไป" เพราะสองคนติดกันได้ประโยคเดียวกัน
   ส่วนข้อความทวงตอน 22:00 ยังกวน ๆ ได้ตามเดิม
 - `schema.sql` — users / meals / weights / chat_targets / challenge_members / workouts / api_usage
+  ตารางที่ worker สร้างเองตอนรัน (ไม่ได้อยู่ใน schema.sql): `chat_view_tokens` `chat_people`
+  `oauth_links` `oauth_states` `device_links` `device_shares` `sleep_scores` `app_meta`
 - `scripts/deploy.sh` — deploy ครบจบในสคริปต์เดียว
+- **การเห็นข้อมูลแยกเป็นรายห้องเสมอ** ไม่ว่าจะเป็นแคลอรี่หรือการนอน
+  - `chat_people` = ใครเคยคุยห้องไหน (เก็บ `display_name` ด้วย ถาม LINE ครั้งเดียวตอนเห็นครั้งแรก)
+    **`usersInChat` ใช้ได้เฉพาะเรื่องที่ต้องมีเป้าแคลอรี่** เพราะมัน JOIN `users`
+    เรื่องอื่น (เช่นสรุปการนอน) ต้องใช้ `chatMembers`/`chatRoster` ไม่งั้นคนที่ไม่เคยพิมพ์ `ตั้งเป้า` จะหายไป
+    (เจอจริง 25 ส.ค.: "ของแม่ไม่โชว์" — แม่เชื่อมนาฬิกาแต่ไม่เคยตั้งเป้า)
+  - `device_shares (chat_id, line_user_id)` = นาฬิกาเรือนนี้เปิดให้ห้องไหนเห็นบ้าง
+    **`ตัดการเชื่อมต่อ` = เลิกแชร์เฉพาะห้องที่พิมพ์** เจ้าของสั่งไว้ว่า
+    "ยกเลิกการเชื่อมจากกลุ่มครอบครัว กลุ่มแฟนต้องไม่ยกเลิก"
+    ลบโทเคนจริงเฉพาะตอนไม่เหลือห้องไหนแชร์ หรือสั่ง `ตัดการเชื่อมต่อทั้งหมด`
+    `syncWearableCheckins` ก็ JOIN `device_shares` ด้วย เลิกแชร์แล้วต้องหยุดเช็คอินให้
+    ตอน deploy ครั้งแรกมี seed เติมห้องเดิมให้คนที่เชื่อมไว้ก่อนแล้ว (`app_meta.seed_device_shares`)
+    **ห้ามให้ seed รันซ้ำ** ไม่งั้นห้องที่ผู้ใช้เพิ่งกดเลิกแชร์จะกลับมาเอง
 - `src/wearables.js` — OAuth + เก็บโทเคนของ WHOOP และ Google Health (แยกไฟล์เพราะ index.js ยาวเกินแล้ว)
   **ทั้ง 3 ข้อนี้พลาดแล้วพังเงียบ ๆ อย่าเอาออก**
   1. WHOOP ต้องมี scope `offline` ใน authorize URL ไม่งั้นไม่คืน `refresh_token` และต้องส่ง `scope=offline` ตอน refresh ด้วย
@@ -103,6 +117,10 @@ bash scripts/deploy.sh
   `configProblem()` จับสองอาการนี้แล้ว และ `/api/health` โชว์ `client_id` เต็ม ๆ ให้เทียบได้
   (client_id ไม่ใช่ความลับ ส่วน secret โชว์แค่ความยาว มีเทสคุมว่าห้ามหลุด)
   **ทางที่ชัวร์ที่สุดคือตั้งผ่านหน้าเว็บ Cloudflare** ไม่ใช่ command line
+  **คนเชื่อมไม่สำเร็จแล้วไม่มีใครรู้ = อาการที่เจอบ่อยที่สุด** Google ขึ้น "Access blocked" ตั้งแต่หน้าของ Google
+  แล้ว**ไม่ redirect กลับมาเลย** เราจึงไม่มีทางเห็น error นั้นในฝั่งเรา ดูออกจาก
+  มีแถวใน `oauth_states`/`oauth_links` แต่ไม่มีใน `device_links` — คำสั่ง `นอน` จะบอกชื่อคนนั้นให้แล้ว
+  แก้ที่ Google Cloud Console → Audience → Test users (แอปยังเป็นโหมด Testing)
   **สรุปการนอน/recovery ดึงสดจากนาฬิกาทุกครั้ง ไม่ได้เก็บใน D1** — คำสั่ง `นอน` ในแชท
   และ `/api/sleep` ที่หน้า `/calories` เอาไปแสดง (ยังไม่มี cron เก็บย้อนหลัง)
   **Google Health API ไม่มี Sleep score และไม่มี Readiness** (ค้นทั้ง discovery doc แล้ว `readiness` = 0 ครั้ง)

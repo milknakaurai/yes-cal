@@ -104,6 +104,14 @@ export async function ensureWearableTables(env) {
        line_user_id TEXT NOT NULL, date TEXT NOT NULL, score INTEGER NOT NULL,
        created_at TEXT DEFAULT (datetime('now')),
        PRIMARY KEY (line_user_id, date))`,
+    // นาฬิกาหนึ่งเรือน แชร์เข้าห้องไหนบ้าง — แยกจาก device_links ที่เก็บโทเคน
+    // เจ้าของกำหนดไว้ว่า "ยกเลิกการเชื่อมจากกลุ่มครอบครัว กลุ่มแฟนต้องไม่ยกเลิก"
+    `CREATE TABLE IF NOT EXISTS device_shares (
+       chat_id TEXT NOT NULL, line_user_id TEXT NOT NULL,
+       created_at TEXT DEFAULT (datetime('now')),
+       PRIMARY KEY (chat_id, line_user_id))`,
+    `CREATE TABLE IF NOT EXISTS app_meta (
+       key TEXT PRIMARY KEY, value TEXT, updated_at TEXT DEFAULT (datetime('now')))`,
   ];
   for (const sql of stmts) await env.DB.prepare(sql).run();
 
@@ -113,10 +121,99 @@ export async function ensureWearableTables(env) {
   for (const sql of [
     `ALTER TABLE workouts ADD COLUMN device_id TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_workouts_device ON workouts(chat_id, device_id)`,
+    // จำโทเคนผูกบัญชีไว้กับ state ด้วย จะได้ปิดลิงก์ได้ตอน callback
+    // (ตอน callback ไม่มี ?t= ให้อ่าน ผู้ให้บริการส่งกลับมาแค่ code กับ state)
+    `ALTER TABLE oauth_states ADD COLUMN link_token TEXT`,
   ]) {
     try { await env.DB.prepare(sql).run(); } catch { /* มีอยู่แล้ว */ }
   }
+
+  await seedDeviceShares(env);
   tablesReady = true;
+}
+
+// คนที่เชื่อมนาฬิกาไว้ก่อนจะมีตาราง device_shares เคยเห็นข้อมูลได้ทุกห้องที่ตัวเองอยู่
+// ถ้าไม่เติมให้ พอ deploy รุ่นนี้ปุ๊บ ข้อมูลจะหายจากทุกกลุ่มทันทีโดยไม่มีใครสั่ง
+// รันครั้งเดียวเท่านั้น (จำไว้ใน app_meta) ไม่งั้นห้องที่ผู้ใช้เพิ่งกดเลิกแชร์จะกลับมาเอง
+async function seedDeviceShares(env) {
+  const done = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = 'seed_device_shares'`).first();
+  if (done) return;
+  for (const sql of [
+    `INSERT OR IGNORE INTO device_shares (chat_id, line_user_id)
+       SELECT DISTINCT m.chat_id, m.line_user_id FROM challenge_members m
+        WHERE m.active = 1 AND m.line_user_id IN (SELECT line_user_id FROM device_links)`,
+    `INSERT OR IGNORE INTO device_shares (chat_id, line_user_id)
+       SELECT DISTINCT l.chat_id, l.line_user_id FROM oauth_links l
+        WHERE l.chat_id IS NOT NULL AND l.line_user_id IN (SELECT line_user_id FROM device_links)`,
+  ]) {
+    try { await env.DB.prepare(sql).run(); } catch { /* ตารางเก่ายังไม่มี */ }
+  }
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO app_meta (key, value, updated_at) VALUES ('seed_device_shares', '1', ?)`
+  ).bind(nowIso()).run();
+}
+
+// ---------------------------------------------------------------- แชร์เข้าห้อง
+
+export async function shareWithChat(env, chatId, lineUserId) {
+  if (!chatId) return;
+  await ensureWearableTables(env);
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO device_shares (chat_id, line_user_id) VALUES (?, ?)`
+  ).bind(chatId, lineUserId).run();
+}
+
+// เลิกแชร์เฉพาะห้องนี้ · ห้องอื่นไม่กระทบ และโทเคนยังอยู่
+export async function unshareChat(env, chatId, lineUserId) {
+  await ensureWearableTables(env);
+  await env.DB.prepare(
+    `DELETE FROM device_shares WHERE chat_id = ? AND line_user_id = ?`
+  ).bind(chatId, lineUserId).run();
+  // ลบคำขอเชื่อมเก่าของห้องนี้ทิ้งด้วย ไม่งั้นจะถูกนับเป็น "กดลิงก์แล้วยังไม่สำเร็จ"
+  await forgetConnectRequests(env, lineUserId, chatId);
+  return chatsSharedWith(env, lineUserId);
+}
+
+export async function forgetConnectRequests(env, lineUserId, chatId) {
+  await ensureWearableTables(env);
+  const stmt = chatId
+    ? env.DB.prepare(`DELETE FROM oauth_links WHERE line_user_id = ? AND chat_id = ?`).bind(lineUserId, chatId)
+    : env.DB.prepare(`DELETE FROM oauth_links WHERE line_user_id = ?`).bind(lineUserId);
+  await stmt.run();
+}
+
+export async function chatsSharedWith(env, lineUserId) {
+  await ensureWearableTables(env);
+  return (await env.DB.prepare(
+    `SELECT chat_id FROM device_shares WHERE line_user_id = ? ORDER BY created_at`
+  ).bind(lineUserId).all()).results.map((r) => r.chat_id);
+}
+
+export async function isSharedWith(env, chatId, lineUserId) {
+  await ensureWearableTables(env);
+  const row = await env.DB.prepare(
+    `SELECT 1 AS ok FROM device_shares WHERE chat_id = ? AND line_user_id = ?`
+  ).bind(chatId, lineUserId).first();
+  return !!row;
+}
+
+// คนที่เชื่อมนาฬิกาไว้ "และ" ยอมให้ห้องนี้เห็น
+export async function sharedUsers(env, chatId) {
+  await ensureWearableTables(env);
+  return (await env.DB.prepare(
+    `SELECT DISTINCT s.line_user_id FROM device_shares s
+       JOIN device_links d ON d.line_user_id = s.line_user_id
+      WHERE s.chat_id = ?`
+  ).bind(chatId).all()).results.map((r) => r.line_user_id);
+}
+
+// คนในห้องที่ขอลิงก์ไว้แล้วแต่ยังไม่มีนาฬิกาผูกอยู่จริง = กดลิงก์แล้วไม่ได้กลับมา
+export async function pendingConnections(env, chatId) {
+  await ensureWearableTables(env);
+  return (await env.DB.prepare(
+    `SELECT DISTINCT line_user_id FROM oauth_links
+      WHERE chat_id = ? AND line_user_id NOT IN (SELECT line_user_id FROM device_links)`
+  ).bind(chatId).all()).results.map((r) => r.line_user_id);
 }
 
 const randomToken = () => crypto.randomUUID().replace(/-/g, "");
@@ -153,12 +250,12 @@ export async function consumeLinkToken(env, token) {
 // ---------------------------------------------------------------- state (กัน CSRF)
 
 // WHOOP บังคับว่า state ต้องยาวอย่างน้อย 8 ตัวอักษร — 32 ตัวนี้ผ่านสบาย
-export async function createState(env, provider, lineUserId, chatId) {
+export async function createState(env, provider, lineUserId, chatId, linkToken) {
   await ensureWearableTables(env);
   const state = randomToken();
   await env.DB.prepare(
-    `INSERT INTO oauth_states (state, provider, line_user_id, chat_id, expires_at) VALUES (?, ?, ?, ?, ?)`
-  ).bind(state, provider, lineUserId, chatId || null, inMinutes(15)).run();
+    `INSERT INTO oauth_states (state, provider, line_user_id, chat_id, link_token, expires_at) VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(state, provider, lineUserId, chatId || null, linkToken || null, inMinutes(15)).run();
   return state;
 }
 
@@ -166,7 +263,7 @@ export async function consumeState(env, state) {
   if (!state) return null;
   await ensureWearableTables(env);
   const row = await env.DB.prepare(
-    `SELECT provider, line_user_id, chat_id FROM oauth_states WHERE state = ? AND expires_at > ?`
+    `SELECT provider, line_user_id, chat_id, link_token FROM oauth_states WHERE state = ? AND expires_at > ?`
   ).bind(state, nowIso()).first();
   if (row) await env.DB.prepare(`DELETE FROM oauth_states WHERE state = ?`).bind(state).run();
   return row || null;
