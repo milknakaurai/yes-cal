@@ -278,7 +278,8 @@ show('Lek พิมพ์ "3 วันที่แล้ววิ่ง" (ไม
 check('เลขบอกวันไม่นับเป็นตัวเลขออกกำลังกาย',
   !!vague[0] && !vague[0].includes('บันทึกย้อนหลัง'));
 
-// ย้ายรายการเก่าไปหลายวันก่อน
+// ย้ายรายการเก่าไปหลายวันก่อน — เหลือรายการเดียวก่อน ไม่งั้นเข้าเงื่อนไข "กำกวม" (ที่ตั้งใจ)
+db.prepare(`DELETE FROM workouts WHERE line_user_id='U_LEK'`).run();
 geminiReply = { is_workout: true, activity: 'วิ่งลู่', duration_min: 40, kcal: 350 };
 await send(textEvent('U_LEK', 'วิ่งลู่ 40 นาที'));
 show('Lek พิมพ์ "4 วันที่แล้ว" เฉย ๆ (ย้ายรายการล่าสุด)', await send(textEvent('U_LEK', '4 วันที่แล้ว')));
@@ -295,6 +296,40 @@ check('ย้ายรายการล่าสุดไป 4 วันที�
   show('Lek พิมพ์ "3 วันที่แล้ว" (รายการล่าสุดอยู่เมื่อวาน)', await send(textEvent('U_LEK', '3 วันที่แล้ว')));
   check('ย้ายรายการของเมื่อวานได้ ไม่ใช่เฉพาะของวันนี้',
     db.prepare(`SELECT logged_date FROM workouts WHERE message_id='m-bike'`).get()?.logged_date === dayAgo(3));
+}
+
+// มีหลายรายการ = กำกวม ต้องไม่เดา (เคสจริง 25 ส.ค. เดาผิดไปย้ายบาสแทนเดิน)
+{
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_ERK'`).run();
+  db.prepare(`INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, source, message_id, logged_date)
+              VALUES ('G1','U_ERK','เดิน',30,'text','m-walk',?)`).run(dayAgo(1));
+  db.prepare(`INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, source, message_id, logged_date)
+              VALUES ('G1','U_ERK','บาสเกตบอล',105,'image','m-basket',?)`).run(dayAgo(0));
+  CURRENT_NAME = 'Milk';
+  const ambiguous = await send(textEvent('U_MILK', '2 วันที่แล้ว @Erk Sasin', {
+    mention: { mentionees: [{ index: 13, length: 10, userId: 'U_ERK', type: 'user' }] } }));
+  show('Milk แท็ก Erk + "2 วันที่แล้ว" ทั้งที่ Erk มี 2 รายการ', ambiguous);
+  check('มีหลายรายการ → ไม่ย้าย ถามก่อน', ambiguous[0].includes('ไม่กล้าเดา'));
+  check('ไม่แตะข้อมูลเลย',
+    db.prepare(`SELECT logged_date FROM workouts WHERE message_id='m-basket'`).get()?.logged_date === dayAgo(0));
+  check('ลิสต์รายการให้เลือก', ambiguous[0].includes('บาสเกตบอล') && ambiguous[0].includes('เดิน'));
+
+  // reply เจาะจงมาที่รายการไหน ย้ายอันนั้น ไม่ถามซ้ำ
+  const moved = await send(textEvent('U_MILK', '2 วันที่แล้ว', { quotedMessageId: 'm-walk' }));
+  check('reply เจาะจง → ย้ายได้เลย', moved[0].includes('ย้าย "เดิน"'));
+  check('ย้ายอันที่ reply มา ไม่ใช่อันล่าสุด',
+    db.prepare(`SELECT logged_date FROM workouts WHERE message_id='m-walk'`).get()?.logged_date === dayAgo(2));
+  check('บอกวิธีกู้คืนไว้ในข้อความ', moved[0].includes('ย้ายกลับ'));
+
+  // กู้คืน
+  show('Milk พิมพ์ "ย้ายกลับ"', await send(textEvent('U_MILK', 'ย้ายกลับ')));
+  check('กู้คืนวันเดิมได้',
+    db.prepare(`SELECT logged_date FROM workouts WHERE message_id='m-walk'`).get()?.logged_date === dayAgo(1));
+  // เคลียร์ประวัติการย้ายที่ค้างจากเทสก่อนหน้าออกก่อน แล้วค่อยเช็คว่า "ไม่มีอะไรให้กู้"
+  db.prepare(`UPDATE workouts SET prev_date = NULL, moved_at = NULL`).run();
+  check('ไม่มีการย้ายค้างอยู่ → บอกตรง ๆ',
+    (await send(textEvent('U_MILK', 'ย้ายกลับ')))[0].includes('ไม่มีการย้าย'));
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_ERK'`).run();
 }
 
 // reply ไปที่ข้อความที่ไม่เคยถูกเช็คอิน — ต้องบอกให้ชัดว่าทำไมไม่มีอะไรให้ย้าย (เคสจริง Erk 25 ส.ค.)

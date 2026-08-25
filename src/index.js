@@ -1763,6 +1763,7 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   if (/^(สมาชิก|รายชื่อ|ใครอยู่บ้าง)$/.test(text)) return replyMembers(env, event, chatId);
   if (/^(เว็บ|ลิงก์|ลิงค์|ลิ้งค์|link|dashboard)$/i.test(text)) return replyDashboardLink(env, event, chatId);
   if (/^(ลิงก์ใหม่|ลิงค์ใหม่|เปลี่ยนลิงก์|เปลี่ยนลิงค์)$/.test(text)) return replyDashboardLink(env, event, chatId, true);
+  if (/^(ย้ายกลับ|เลิกย้าย|ยกเลิกการย้าย|undo)$/i.test(text)) return replyUndoMove(env, event, chatId);
 
   const mentioneesForDelete = event.message?.mention?.mentionees || [];
   const delMatch = stripMentions(text, mentioneesForDelete).match(/^(?:ลบ|ลบล่าสุด|ยกเลิก)\s*(\d+)?$/);
@@ -2037,7 +2038,42 @@ async function removeWorkoutRow(env, event, chatId, row) {
 // ย้ายรายการเช็คอินไปเป็นของเมื่อวาน
 // ถ้า reply (quote) มาที่ข้อความ/รูปไหน จะย้ายรายการของข้อความนั้น — ช่วยแก้ให้เพื่อนได้
 // ถ้าไม่ได้ reply มา จะย้ายรายการล่าสุดของคนที่พิมพ์เอง
+// เก็บวันเดิมไว้ก่อนย้าย เพื่อให้ "ย้ายกลับ" กู้คืนได้ — ย้ายผิดแล้วต้องแก้กลับได้เสมอ
+let moveColumnsReady = false;
+async function ensureMoveColumns(env) {
+  if (moveColumnsReady) return;
+  for (const sql of [
+    `ALTER TABLE workouts ADD COLUMN prev_date TEXT`,
+    `ALTER TABLE workouts ADD COLUMN moved_at TEXT`,
+  ]) {
+    try { await env.DB.prepare(sql).run(); } catch { /* มีอยู่แล้ว */ }
+  }
+  moveColumnsReady = true;
+}
+
+async function replyUndoMove(env, event, chatId) {
+  await ensureMoveColumns(env);
+  const last = await env.DB.prepare(
+    `SELECT w.id, w.activity, w.logged_date, w.prev_date, m.display_name
+       FROM workouts w LEFT JOIN challenge_members m
+         ON m.chat_id = w.chat_id AND m.line_user_id = w.line_user_id
+      WHERE w.chat_id = ? AND w.prev_date IS NOT NULL
+      ORDER BY w.moved_at DESC LIMIT 1`
+  ).bind(chatId).first();
+  if (!last) {
+    return lineReply(env, event.replyToken, "ไม่มีการย้ายวันที่ให้กู้คืนครับ 🤔");
+  }
+  await env.DB.prepare(
+    `UPDATE workouts SET logged_date = ?, prev_date = NULL, moved_at = NULL WHERE id = ?`
+  ).bind(last.prev_date, last.id).run();
+  return lineReply(env, event.replyToken, [
+    `กู้คืนแล้วครับ ↩️`,
+    `"${last.activity}"${last.display_name ? " ของ " + last.display_name : ""} กลับไปเป็นวันที่ ${thaiDateText(last.prev_date)} ตามเดิม`,
+  ].join("\n"));
+}
+
 async function moveLastWorkoutBack(env, event, chatId, userId, opts = {}) {
+  await ensureMoveColumns(env);
   const today = bkkToday();
   const { days = 1, quotedMessageId = null, mentionedIds = [] } = opts;
   const targetDate = bkkDateOffset(-Math.max(1, days));
@@ -2073,6 +2109,29 @@ async function moveLastWorkoutBack(env, event, chatId, userId, opts = {}) {
   // 3) ไม่ได้ระบุใคร → รายการล่าสุดของคนที่พิมพ์
   if (!target) target = await latestOf(userId);
 
+  // ถ้าไม่ได้ reply เจาะจงมา และเจ้าของรายการมีหลายรายการในช่วงนี้ = กำกวม
+  // ห้ามเดา — เคยเดาผิดแล้วไปย้ายรายการที่วันถูกอยู่แล้วให้เพี้ยน (25 ส.ค.: ย้ายบาสแทนเดิน)
+  if (target && !quotedMessageId) {
+    const owner = mentionedIds.find((u) => u !== userId) || userId;
+    const options = (await env.DB.prepare(
+      `SELECT id, activity, duration_min, logged_date FROM workouts
+        WHERE chat_id = ? AND line_user_id = ? AND logged_date >= ?
+        ORDER BY logged_date DESC, id DESC LIMIT 5`
+    ).bind(chatId, owner, since).all()).results;
+
+    if (options.length > 1) {
+      const who = target.display_name ? `ของ ${target.display_name} ` : "";
+      return lineReply(env, event.replyToken, [
+        `มีหลายรายการ${who}ผมเลยไม่กล้าเดาว่าอันไหนครับ 🤔`,
+        "",
+        ...options.map((o) => `• ${thaiDateText(o.logged_date)} — ${o.activity}${o.duration_min ? ` ${o.duration_min} นาที` : ""}`),
+        "",
+        `ให้ reply ที่รูปหรือข้อความของรายการนั้นโดยตรง แล้วพิมพ์คำบอกวันอีกที`,
+        `หรือถ้ายังไม่เคยบันทึก พิมพ์ใหม่ทีเดียวจบ เช่น "2 วันที่แล้วเดิน 5 กม."`,
+      ].join("\n"));
+    }
+  }
+
   if (!target) {
     // reply มาที่ข้อความที่ไม่เคยถูกเช็คอิน (เช่นข้อความที่ผมตอบว่าไม่เข้าใจ) ก็จะมาตกตรงนี้
     // LINE ไม่ให้อ่านเนื้อหาข้อความที่ถูก reply เลยเดาแทนไม่ได้ ต้องให้พิมพ์ใหม่
@@ -2093,8 +2152,9 @@ async function moveLastWorkoutBack(env, event, chatId, userId, opts = {}) {
       `"${target.activity}" ของ ${target.display_name || "คนนี้"} อยู่ที่วันที่ ${thaiDateText(targetDate)} อยู่แล้วครับ 👍`);
   }
 
-  await env.DB.prepare("UPDATE workouts SET logged_date = ? WHERE id = ?")
-    .bind(targetDate, target.id).run();
+  await env.DB.prepare(
+    "UPDATE workouts SET logged_date = ?, prev_date = ?, moved_at = ? WHERE id = ?"
+  ).bind(targetDate, target.logged_date, new Date().toISOString(), target.id).run();
 
   const { done, missing } = await getTodayStatus(env, chatId);
   const who = target.display_name ? `ของ ${target.display_name} ` : "";
@@ -2105,6 +2165,8 @@ async function moveLastWorkoutBack(env, event, chatId, userId, opts = {}) {
     missing.length
       ? `วันนี้เลยยังไม่นับ — เหลืออีก ${missing.length} คนที่ยังไม่ออก`
       : "วันนี้ทุกคนเช็คอินครบแล้ว 🎉",
+    "",
+    'ย้ายผิดพิมพ์ "ย้ายกลับ" ได้เลย',
   ].join("\n"));
 }
 
@@ -2352,7 +2414,8 @@ function challengeHelpText() {
     "วันนี้ — ดูว่าใครออกแล้ว ใครยังไม่ออก",
     "สมาชิก — ดูรายชื่อคนที่เข้าร่วมทั้งหมด",
     "ลบ — ลบรายการเช็คอินของตัวเอง (แท็กชื่อ/reply เพื่อลบของเพื่อน)",
-    "เมื่อวาน / วานซืน / 3 วันที่แล้ว — ย้ายรายการล่าสุดไปเป็นของวันนั้น",
+    "เมื่อวาน / วานซืน / 3 วันที่แล้ว — ย้ายรายการไปเป็นของวันนั้น",
+    "ย้ายกลับ — กู้คืนการย้ายวันที่ครั้งล่าสุด",
     "   (แท็กชื่อเพื่อน หรือ reply ที่รูปเขา แล้วพิมพ์คำบอกวัน ก็แก้ให้เขาได้)",
     "   บันทึกย้อนหลังพร้อมรายละเอียดเลยก็ได้ เช่น \"3 วันที่แล้ววิ่ง 5 กม.\"",
     "เตือน — แท็กชื่อคนที่ยังไม่ออก (เด้งแจ้งเตือนถึงตัว)",
