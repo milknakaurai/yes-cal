@@ -192,7 +192,7 @@ async function handleTextMessage(event, env, userId) {
   if (proteinGoalMatch) return setProteinTarget(env, event, user, parseInt(proteinGoalMatch[1] || "0", 10));
   const suggest = text.match(/^(?:กินอะไรดี|กินไรดี|กินอะไรดีวันนี้|กินไรดีวันนี้|แนะนำเมนู|แนะนำอาหาร|เมนูแนะนำ)(?:\s+(.*))?$/);
   if (suggest) return replySuggestion(env, event, user, (suggest[1] || "").trim());
-  if (/^สรุป$/.test(text)) return replyTodaySummary(env, event);
+  if (/^(สรุป|วันนี้)$/.test(text)) return replyTodaySummary(env, event);
   if (/^(สัปดาห์|รายสัปดาห์)$/.test(text)) return replyWeekSummary(env, event);
   if (/^(ลบล่าสุด|ลบ)$/.test(text)) return deleteLastMeal(env, event, user);
   if (/^(ล้างวันนี้|รีเซ็ตวันนี้|เริ่มใหม่วันนี้|ล้าง|รีเซ็ต|reset)$/i.test(text)) return clearToday(env, event, user);
@@ -232,7 +232,7 @@ function helpText() {
     "⌚ เชื่อมนาฬิกา — ต่อ WHOOP หรือ Fitbit เข้ากับบอท",
     "🍜 กินอะไรดี — แนะนำเมนูให้พอดีกับที่เหลือของวันนี้",
     "     ใส่เงื่อนไขต่อท้ายได้ เช่น \"กินอะไรดี ร้านตามสั่ง\"",
-    "📊 สรุป — ยอดวันนี้ของทั้งคู่",
+    "📊 สรุป / วันนี้ — ยอดวันนี้ของทั้งคู่",
     "📅 สัปดาห์ — ย้อนหลัง 7 วัน",
     "🗑️ ลบล่าสุด — ลบรายการอาหารล่าสุดของวันนี้",
     "🧹 ล้างวันนี้ — ลบรายการอาหารวันนี้ทั้งหมด (เฉพาะของตัวเอง)",
@@ -1019,11 +1019,21 @@ async function syncWearableCheckins(env) {
 }
 
 // สั่งซิงก์เองได้ ไม่ต้องรอ cron — ไว้ทดสอบและไว้ใช้ตอนเพิ่งออกกำลังกายเสร็จ
-async function replySync(env, event) {
+// รายการที่ซิงก์ได้จะไปลงเฉพาะ "กลุ่มชาเลนจ์" ที่คนคนนั้นเป็นสมาชิก
+// ถ้าสั่งจากกลุ่มแคลอรี่ อย่าบอกให้พิมพ์ "วันนี้" ที่นี่ — เป็นคำสั่งของอีกโหมด รายการก็ไม่ได้อยู่ที่นี่
+async function replySync(env, event, chatId) {
   const added = await syncWearableCheckins(env);
-  return lineReply(env, event.replyToken, added
-    ? `ซิงก์จากนาฬิกาแล้ว เช็คอินเพิ่มให้ ${added} รายการ ⌚\nพิมพ์ "วันนี้" เพื่อดูผล`
-    : "ซิงก์แล้วครับ ยังไม่มีรายการใหม่จากนาฬิกา ⌚\n(ลองซิงก์แอปนาฬิกาในมือถือก่อน แล้วสั่งใหม่อีกที)");
+  if (!added) {
+    return lineReply(env, event.replyToken,
+      "ซิงก์แล้วครับ ยังไม่มีรายการใหม่จากนาฬิกา ⌚\n(ลองซิงก์แอปนาฬิกาในมือถือก่อน แล้วสั่งใหม่อีกที)");
+  }
+  const inChallenge = (await getChatMode(env, chatId)) === "challenge";
+  return lineReply(env, event.replyToken, [
+    `ซิงก์จากนาฬิกาแล้ว เช็คอินเพิ่มให้ ${added} รายการ ⌚`,
+    inChallenge
+      ? 'พิมพ์ "วันนี้" เพื่อดูผล'
+      : 'รายการไปลงในกลุ่มชาเลนจ์ของคุณ — พิมพ์ "วันนี้" ในกลุ่มนั้นเพื่อดูผล',
+  ].join("\n"));
 }
 
 // ---------------------------------------------------------------- OAuth เชื่อมนาฬิกา
@@ -1271,7 +1281,7 @@ async function handleWearableCommand(env, event, userId, chatId, text) {
     return { handled: true, promise: replyDisconnect(env, event, userId) };
   }
   if (/^(ซิงก์|ซิ้งค์|sync|ดึงข้อมูลนาฬิกา)$/i.test(text)) {
-    return { handled: true, promise: replySync(env, event) };
+    return { handled: true, promise: replySync(env, event, chatId) };
   }
   if (/^(นอน|การนอน|เมื่อคืนนอน|sleep|recovery|readiness)$/i.test(text)) {
     return { handled: true, promise: replySleep(env, event, chatId, userId) };

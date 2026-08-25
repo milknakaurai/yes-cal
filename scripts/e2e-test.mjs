@@ -695,6 +695,25 @@ check('เก็บคะแนนที่กรอกเองลงฐาน�
   db.prepare(`SELECT score FROM sleep_scores WHERE line_user_id='U_DM'`).get()?.score === 74);
 show('Milk พิมพ์ "คะแนนนอน 250" (นอกช่วง)', await send(dmEvent('U_DM', 'คะแนนนอน 250')));
 
+// "วันนี้" ในโหมดแคลอรี่ต้องได้สรุป ไม่ใช่เงียบ (เคสจริงกลุ่ม MCL FOOD 24 ส.ค.)
+const calToday = await send(dmEvent('U_DM', 'วันนี้'));
+show('Milk พิมพ์ "วันนี้" ในแชทโหมดแคลอรี่', calToday);
+check('"วันนี้" โหมดแคลอรี่ตอบสรุป ไม่เงียบ', calToday.length > 0);
+check('ได้สรุปแบบเดียวกับคำสั่ง "สรุป"',
+  calToday[0] === (await send(dmEvent('U_DM', 'สรุป')))[0]);
+
+// ข้อความหลังซิงก์ต้องไม่ชี้ให้พิมพ์ "วันนี้" ในกลุ่มที่ไม่ใช่โหมดชาเลนจ์
+{
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_PEACH'`).run();
+  const inCal = await send(dmEvent('U_PEACH', 'ซิงก์'));
+  show('Peach สั่ง "ซิงก์" จากแชทโหมดแคลอรี่', inCal);
+  check('บอกว่ารายการไปลงกลุ่มชาเลนจ์', inCal[0].includes('กลุ่มชาเลนจ์ของคุณ'));
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_PEACH'`).run();
+  const inChal = await send(textEvent('U_PEACH', 'ซิงก์'));
+  check('ในกลุ่มชาเลนจ์ยังบอกให้พิมพ์ "วันนี้" ตรงนั้น',
+    inChal[0].includes('พิมพ์ "วันนี้" เพื่อดูผล'));
+}
+
 const sleepApi = await api('/api/sleep?key=dash');
 check('/api/sleep ตอบได้แม้ยังไม่มีใครเชื่อม', Array.isArray(sleepApi.people));
 const sleepNoAuth = await worker.fetch(new Request('https://x/api/sleep'), env, ctx);
