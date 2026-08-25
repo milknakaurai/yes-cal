@@ -977,13 +977,39 @@ async function syncWearableCheckins(env) {
       const key = `${link.provider}:${w.external_id}`;
       for (const { chat_id } of chats) {
         const dup = await env.DB.prepare(
-          `SELECT id FROM workouts WHERE chat_id = ? AND message_id = ?`
-        ).bind(chat_id, key).first();
+          `SELECT id FROM workouts WHERE chat_id = ? AND (device_id = ? OR message_id = ?)`
+        ).bind(chat_id, key, key).first();
         if (dup) continue;
+
+        // ส่งรูปเองแล้วนาฬิกาซิงก์รอบเดียวกันมาทีหลัง = การออกกำลังกายครั้งเดียว
+        // ทับของเดิมด้วยตัวเลขจากนาฬิกา (แม่นกว่า) แทนที่จะเพิ่มแถวใหม่ให้ซ้ำ
+        //
+        // ต้องตรงทั้งระยะเวลา (ห่างไม่เกิน 5 นาที) และชนิดกิจกรรม
+        // ดูแค่ระยะเวลาอย่างเดียวไม่พอ — ว่ายน้ำ 45 นาทีกับเวท 41 นาทีในวันเดียวกัน
+        // เป็นคนละรอบ แต่จะถูกรวมเป็นรอบเดียว
+        const same = w.duration_min ? await env.DB.prepare(
+          `SELECT id FROM workouts
+            WHERE chat_id = ? AND line_user_id = ? AND logged_date = ?
+              AND device_id IS NULL AND duration_min IS NOT NULL
+              AND ABS(duration_min - ?) <= 5
+              AND (activity = ? OR instr(activity, ?) > 0 OR instr(?, activity) > 0)
+            ORDER BY id LIMIT 1`
+        ).bind(chat_id, link.line_user_id, w.date, w.duration_min,
+               w.activity, w.activity, w.activity).first() : null;
+
+        if (same) {
+          // คง message_id เดิมไว้ เพื่อให้ reply ที่รูปนั้นแล้วสั่งย้ายวันยังทำงานได้
+          await env.DB.prepare(
+            `UPDATE workouts SET activity = ?, duration_min = ?, kcal = COALESCE(?, kcal), device_id = ?
+              WHERE id = ?`
+          ).bind(w.activity, w.duration_min, w.kcal || null, key, same.id).run();
+          continue;
+        }
+
         await env.DB.prepare(
-          `INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, message_id, logged_date)
-           VALUES (?, ?, ?, ?, ?, 'device', ?, ?)`
-        ).bind(chat_id, link.line_user_id, w.activity, w.duration_min || null, w.kcal || null, key, w.date).run();
+          `INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, message_id, device_id, logged_date)
+           VALUES (?, ?, ?, ?, ?, 'device', ?, ?, ?)`
+        ).bind(chat_id, link.line_user_id, w.activity, w.duration_min || null, w.kcal || null, key, key, w.date).run();
         added++;
       }
     }

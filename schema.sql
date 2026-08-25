@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS workouts (
   kcal INTEGER,
   source TEXT DEFAULT 'image',   -- 'image' | 'text'
   message_id TEXT,               -- id ข้อความ LINE ที่ทำให้เกิดรายการนี้ (ไว้ reply มาแก้วันที่)
+  device_id TEXT,                -- "<provider>:<id>" ของรายการฝั่งนาฬิกา (กันซิงก์ซ้ำ)
   reply_message_id TEXT,         -- id ข้อความที่บอทตอบกลับ (reply ที่ข้อความบอทก็แก้วันที่ได้)
   logged_date TEXT NOT NULL,     -- YYYY-MM-DD (เวลาไทย)
   created_at TEXT DEFAULT (datetime('now'))

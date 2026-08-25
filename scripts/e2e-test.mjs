@@ -513,6 +513,9 @@ console.log('\n--- เช็คอินอัตโนมัติจากน�
     .headers.get('location')).searchParams.get('state');
   await worker.fetch(new Request(`https://x/oauth/whoop/callback?code=C&state=${st}`), env, ctx);
 
+  // ล้างเช็คอินของ Peach ที่ค้างจากเทสก่อนหน้าออกก่อน ไม่งั้นตัวรวมรายการซ้ำจะไปทับของเก่า
+  // แทนที่จะสร้างแถวใหม่ (ถูกต้องตามตรรกะ แต่ทำให้เทสข้อนี้วัดอะไรไม่ได้)
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_PEACH'`).run();
   const before = db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE source='device'`).get().n;
   show('Peach พิมพ์ "ซิงก์"', await send(textEvent('U_PEACH', 'ซิงก์')));
   const rows = db.prepare(
@@ -525,6 +528,35 @@ console.log('\n--- เช็คอินอัตโนมัติจากน�
     !rows.some((r) => r.activity === 'เดิน' && r.duration_min === 40));
   check('เฉพาะย้อนหลังไม่เกิน 2 วัน',
     rows.every((r) => r.logged_date >= new Date(Date.now() + 7 * 3600e3 - 2 * 86400e3).toISOString().slice(0, 10)));
+
+  // ส่งรูปเองแล้วนาฬิกาซิงก์รอบเดียวกันมาทีหลัง = ครั้งเดียว ไม่ใช่สองครั้ง (เคสจริงของ Charlie 24 ส.ค.)
+  {
+    const w = WN.normalizeWhoopWorkouts(whoopWorkoutFixture).filter((x) => WN.countsAsCheckin(x).ok)[0];
+    db.prepare(`DELETE FROM workouts WHERE line_user_id='U_PEACH' AND logged_date=?`).run(w.date);
+    db.prepare(`INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, message_id, logged_date)
+                VALUES ('G1','U_PEACH',?,?,500,'image','m-photo-1',?)`)
+      .run(w.activity, w.duration_min + 2, w.date);   // รูปเดียวกัน อ่านเวลาต่างกัน 2 นาที
+    await send(textEvent('U_PEACH', 'ซิงก์'));
+    const rows2 = db.prepare(
+      `SELECT source, message_id, device_id, duration_min, activity FROM workouts
+        WHERE line_user_id='U_PEACH' AND logged_date=? ORDER BY id`).all(w.date);
+    check('ส่งรูปแล้วซิงก์ตามมา เหลือแถวเดียว', rows2.length === 1);
+    check('ทับด้วยตัวเลขจากนาฬิกา', rows2[0]?.duration_min === w.duration_min);
+    check('ยังคง message_id ของรูปไว้ (reply แก้วันที่ยังใช้ได้)',
+      rows2[0]?.message_id === 'm-photo-1' && String(rows2[0]?.device_id).startsWith('whoop:'));
+    await send(textEvent('U_PEACH', 'ซิงก์'));
+    check('ซิงก์ซ้ำหลังทับแล้ว ไม่เพิ่มแถว',
+      db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_PEACH' AND logged_date=?`).get(w.date).n === 1);
+
+    // กิจกรรมคนละอย่างแต่เวลาใกล้กัน = คนละรอบ ต้องไม่ถูกรวม
+    db.prepare(`DELETE FROM workouts WHERE line_user_id='U_PEACH' AND logged_date=?`).run(w.date);
+    db.prepare(`INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, message_id, logged_date)
+                VALUES ('G1','U_PEACH','ว่ายน้ำ',?,400,'image','m-photo-2',?)`)
+      .run(w.duration_min + 3, w.date);
+    await send(textEvent('U_PEACH', 'ซิงก์'));
+    check('คนละกิจกรรม เวลาใกล้กัน ยังนับแยก',
+      db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_PEACH' AND logged_date=?`).get(w.date).n === 2);
+  }
 
   // สั่งซ้ำต้องไม่บันทึกซ้ำ
   await send(textEvent('U_PEACH', 'ซิงก์'));

@@ -106,6 +106,16 @@ export async function ensureWearableTables(env) {
        PRIMARY KEY (line_user_id, date))`,
   ];
   for (const sql of stmts) await env.DB.prepare(sql).run();
+
+  // เก็บ id ของรายการฝั่งผู้ให้บริการไว้แยกจาก message_id ของ LINE
+  // (message_id ต้องคงไว้ ไม่งั้น reply ที่รูปแล้วสั่งย้ายวันจะหารายการไม่เจอ)
+  // ตารางมีอยู่ก่อนแล้วจึงต้องเติมคอลัมน์ทีหลัง — รันซ้ำได้ ถ้ามีแล้วจะ throw แล้วข้ามไป
+  for (const sql of [
+    `ALTER TABLE workouts ADD COLUMN device_id TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_workouts_device ON workouts(chat_id, device_id)`,
+  ]) {
+    try { await env.DB.prepare(sql).run(); } catch { /* มีอยู่แล้ว */ }
+  }
   tablesReady = true;
 }
 
