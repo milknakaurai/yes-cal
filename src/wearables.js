@@ -138,6 +138,13 @@ export async function ensureWearableTables(env) {
 async function seedDeviceShares(env) {
   const done = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = 'seed_device_shares'`).first();
   if (done) return;
+  // chat_people ถูกสร้างจาก index.js ตอนมีคนทัก — cron อาจตื่นมาก่อนก็ได้
+  // ยังไม่มีตารางก็อย่าเพิ่งปิดงาน รอรอบหน้าค่อยเติมให้ครบ ดีกว่าเติมขาดแล้วปิดถาวร
+  const ready = await env.DB.prepare(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chat_people'`
+  ).first();
+  if (!ready) return;
+
   for (const sql of [
     `INSERT OR IGNORE INTO device_shares (chat_id, line_user_id)
        SELECT DISTINCT m.chat_id, m.line_user_id FROM challenge_members m
@@ -145,6 +152,11 @@ async function seedDeviceShares(env) {
     `INSERT OR IGNORE INTO device_shares (chat_id, line_user_id)
        SELECT DISTINCT l.chat_id, l.line_user_id FROM oauth_links l
         WHERE l.chat_id IS NOT NULL AND l.line_user_id IN (SELECT line_user_id FROM device_links)`,
+    // ห้องที่เคยคุยอยู่ก็เคยเห็นข้อมูลได้ ต้องเติมด้วย ไม่งั้นคนที่ใช้อยู่ทุกวัน
+    // จะพิมพ์ "นอน" ในห้องเดิมแล้วว่างเปล่าโดยไม่ได้สั่งอะไรเลย
+    `INSERT OR IGNORE INTO device_shares (chat_id, line_user_id)
+       SELECT DISTINCT p.chat_id, p.line_user_id FROM chat_people p
+        WHERE p.line_user_id IN (SELECT line_user_id FROM device_links)`,
   ]) {
     try { await env.DB.prepare(sql).run(); } catch { /* ตารางเก่ายังไม่มี */ }
   }
