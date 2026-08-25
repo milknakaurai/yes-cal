@@ -47,8 +47,16 @@ const replies = [];
 let geminiReply = null;
 let suggestReply = null;
 let lastGeminiPrompt = '';
-const whoopWorkoutFixture = JSON.parse(
-  readFileSync(new URL('./fixtures/whoop-workout.json', import.meta.url), 'utf8'));
+// fixture เก็บวันที่จริง (19-23 ส.ค.) แต่ตัวซิงก์รับเฉพาะย้อนหลัง 2 วัน —
+// เลื่อนเวลาทุกรายการให้รายการใหม่สุดกลายเป็น "วันนี้" เทสจะได้ไม่เน่าตามปฏิทิน
+const whoopWorkoutFixture = (() => {
+  const raw = JSON.parse(readFileSync(new URL('./fixtures/whoop-workout.json', import.meta.url), 'utf8'));
+  const bkkDate = (iso) => new Date(new Date(iso).getTime() + 7 * 3600e3).toISOString().slice(0, 10);
+  const newest = raw.records.map((r) => bkkDate(r.end)).sort().at(-1);
+  const shiftDays = Math.round((new Date(bkkDate(new Date().toISOString())) - new Date(newest)) / 86400e3);
+  const shift = (iso) => iso && new Date(new Date(iso).getTime() + shiftDays * 86400e3).toISOString();
+  return { ...raw, records: raw.records.map((r) => ({ ...r, start: shift(r.start), end: shift(r.end) })) };
+})();
 let lastTokenRequest = null;
 let tokenSeq = 0;
 let tokenFails = false;
@@ -104,6 +112,8 @@ export let lastBotMessageId = null;
 
 const worker = (await import(new URL('../src/index.js', import.meta.url))).default;
 const WN = await import(new URL('../src/wearables.js', import.meta.url));
+let failed = 0;
+const check = (label, ok) => { console.log(`  ${ok ? 'OK ' : 'พัง'} ${label}`); if (!ok) failed++; };
 // เก็บงานเบื้องหลังที่ worker ฝากไว้ แล้วให้ settle() รอจนจบจริง ๆ
 // (เดิม waitUntil คืน promise เฉย ๆ ไม่มีใครรอ เทสเลยตรวจผลก่อนงานเสร็จ)
 const pending = [];
@@ -221,6 +231,25 @@ show('Peach reply ที่รูปนาฬิกา + แท็กบอท (
   quotedMessageId: runImg.message.id,
   mention: { mentionees: [{ index: 0, length: 8, userId: 'U_BOT', type: 'user' }] } })));
 
+// แท็กบอทพร้อมเล่าว่าออกอะไรมา (เคสจริงของ Erk 24 ส.ค.) — ต้องบันทึกเลย ไม่ใช่ตอบงง
+CURRENT_NAME = 'Erk Sasin';
+geminiReply = { is_workout: true, activity: 'เดิน + ไดร์ฟกอล์ฟ', duration_min: 60, kcal: 700 };
+const tagLog = await send(textEvent('U_ERK', '@Yes Cal เมื่อวานเดิน 5 km + ไดร์ฟกอล์ฟ น่าจะ 700 แคล รวมแล้ว', {
+  mention: { mentionees: [{ index: 0, length: 8, userId: 'U_BOT', type: 'user' }] } }));
+show('Erk แท็กบอท "เมื่อวานเดิน 5 km + ไดร์ฟกอล์ฟ 700 แคล"', tagLog);
+check('แท็กพร้อมรายละเอียด → เช็คอินให้เลย', !tagLog[0]?.includes('ยังไม่เข้าใจ'));
+const tagged = db.prepare(
+  `SELECT activity, kcal, logged_date FROM workouts WHERE line_user_id='U_ERK' ORDER BY id DESC LIMIT 1`).get();
+check('บันทึกกิจกรรมและแคลตามที่บอก', tagged?.kcal === 700);
+check('คำว่า "เมื่อวาน" ทำให้ลงวันที่เมื่อวาน',
+  tagged?.logged_date === new Date(Date.now() + 7 * 3600e3 - 86400e3).toISOString().slice(0, 10));
+
+// แท็กมาคุยเล่น → ยังตอบช่วยเหลือเหมือนเดิม ไม่เผลอบันทึกมั่ว
+geminiReply = { is_workout: false };
+const tagChat = await send(textEvent('U_ERK', '@Yes Cal เก่งมากเลยวันนี้ 55 ขำ ๆ', {
+  mention: { mentionees: [{ index: 0, length: 8, userId: 'U_BOT', type: 'user' }] } }));
+check('แท็กคุยเล่น → ตอบช่วยเหลือ ไม่บันทึก', tagChat[0]?.includes('เรียกผมเหรอครับ'));
+
 CURRENT_NAME = 'Milk';
 show('Milk พิมพ์ "เตือน" (แท็กคนที่ยังไม่ออก)', await send(textEvent('U_MILK', 'เตือน')));
 show('Milk พิมพ์ "อันดับ"', await send(textEvent('U_MILK', 'อันดับ')));
@@ -237,8 +266,6 @@ async function api(path) {
   if (res.status !== 200) throw new Error(`${path} → status ${res.status}`);
   return res.json();
 }
-let failed = 0;
-const check = (label, ok) => { console.log(`  ${ok ? 'OK ' : 'พัง'} ${label}`); if (!ok) failed++; };
 
 // ---- แนะนำเมนู "กินอะไรดี" (โหมดแคลอรี่ คุยตัวต่อตัวกับบอท) ----
 const dmEvent = (userId, text) => ({

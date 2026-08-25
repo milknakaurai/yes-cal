@@ -1776,9 +1776,15 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   // กลุ่มใหญ่คุยกันเยอะ — กรองด้วยคำก่อน ไม่งั้นเปลืองโควตา Gemini และตอบมั่ว
   if (text.length > 120 || !looksLikeWorkout(text)) return;
 
+  return logWorkoutFromText(env, event, chatId, userId, text, dateOverride);
+}
+
+// วิเคราะห์ข้อความแล้วบันทึกเช็คอิน — ใช้ทั้งข้อความปกติและตอนถูกแท็ก
+// fromTag = true: ถ้าไม่ใช่เรื่องออกกำลังกาย คืน null ให้ผู้เรียกตอบช่วยเหลือแทน (เงียบไม่ได้ เพราะเขาเรียกเรา)
+async function logWorkoutFromText(env, event, chatId, userId, text, dateOverride, fromTag = false) {
   const result = await geminiWorkout(env, [{ text: workoutTextPrompt(text) }]);
   if (result?.__quota) return lineReply(env, event.replyToken, quotaText());
-  if (!result?.is_workout) return; // คุยเล่นทั่วไป → เงียบไว้
+  if (!result?.is_workout) return fromTag ? null : undefined; // คุยเล่นทั่วไป → เงียบไว้
 
   // ใช้มาตรฐานเดียวกับรูป: ต้องมีตัวเลขที่วัดได้ ไม่งั้นบอกอะไรก็เช็คอินได้หมด
   // ("วิ่ง 5 กม." ผ่าน · "วิดพื้น" ไม่ผ่าน) — นับรวมกรณีบอกเป็นคำ เช่น "ครึ่งชั่วโมง" ที่ AI ถอดเป็นนาทีให้
@@ -2209,6 +2215,15 @@ async function replyWhenTagged(env, event, chatId, userId, restText) {
         `ต้องเป็นหน้าจอสรุปผลออกกำลังกายที่มีตัวเลข (เวลา/ระยะทาง/หัวใจ)\n` +
         `ข้อมูลการนอน อาหาร หรือรูปบรรยากาศ ยังไม่นับครับ`);
     }
+  }
+
+  // แท็กมาพร้อมเล่าว่าออกอะไร — บันทึกให้เลย ไม่ต้องให้พิมพ์ใหม่
+  // ("@Yes Cal เมื่อวานเดิน 5 km + ไดร์ฟกอล์ฟ 700 แคล" ต้องจบที่เช็คอิน ไม่ใช่ตอบงง)
+  if (restText && restText.length <= 120 && !isVagueWorkoutWord(restText) &&
+      (looksLikeWorkout(restText) || /\d/.test(restText))) {
+    const dateOverride = YESTERDAY_HINT.test(restText) ? bkkDateOffset(-1) : null;
+    const logged = await logWorkoutFromText(env, event, chatId, userId, restText, dateOverride, true);
+    if (logged !== null) return logged;
   }
 
   return lineReply(env, event.replyToken, [
