@@ -939,6 +939,62 @@ check('ฝั่ง Google ที่ไม่มี strain ใช้เวลา
   WN.countsAsCheckin({ sport: 'walking', scored: true, duration_min: 25, strain: null }).ok === true &&
   WN.countsAsCheckin({ sport: 'walking', scored: true, duration_min: 5, strain: null }).ok === false);
 
+// ---- ถามว่าเช็คอินอะไรไว้ ----
+// เจอจริง 26 ส.ค. กลุ่ม Lai & Kids: Erk แท็กบอทถามว่า "เมื่อวานผมออกกำลัง อะไรนะ"
+// แล้วบอทตอบว่าไม่เข้าใจ เพราะข้อความไม่มีตัวเลขเลยตกด่านเช็คอิน
+console.log('\n--- ถามว่าเช็คอินอะไรไว้ ---');
+{
+  const tagBot = (text, extra = {}) => textEvent('U_ERK', text, {
+    mention: { mentionees: [{ index: 0, length: 8, userId: 'U_BOT', type: 'user' }] }, ...extra });
+
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_ERK'`).run();
+  const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+  const yst = new Date(Date.now() + 7 * 3600e3 - 86400e3).toISOString().slice(0, 10);
+  db.prepare(`INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, logged_date)
+              VALUES ('G1','U_ERK','เวทเทรนนิ่ง (bicep, shoulders, mid back)', NULL, 300, 'text', ?)`).run(yst);
+  db.prepare(`INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, logged_date)
+              VALUES ('G1','U_ERK','เดิน', 40, 180, 'text', ?)`).run(yst);
+  db.prepare(`INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, logged_date)
+              VALUES ('G1','U_ERK','วิ่ง', 30, 300, 'text', ?)`).run(today);
+
+  CURRENT_NAME = 'Erk Sasin';
+  const askY = await send(tagBot('@Yes Cal เมื่อวานผมออกกำลัง อะไรนะ'));
+  show('Erk แท็กบอทถาม "เมื่อวานผมออกกำลัง อะไรนะ"', askY);
+  const y = askY.join('\n');
+  check('ตอบเป็นรายการของเมื่อวาน ไม่ใช่ "ไม่เข้าใจ"', !y.includes('ยังไม่เข้าใจ'));
+  check('ขึ้นทั้งสองรายการของเมื่อวาน', y.includes('เวทเทรนนิ่ง') && y.includes('เดิน'));
+  check('ไม่เอารายการของวันนี้มาปน', !y.includes('วิ่ง'));
+  check('บอกยอดรวมให้ด้วย', y.includes('รวม 2 รายการ') && y.includes('480 kcal'));
+
+  const askT = await send(tagBot('@Yes Cal วันนี้ผมออกกำลังอะไรไปบ้าง'));
+  show('Erk ถามของวันนี้', askT);
+  check('ของวันนี้ได้รายการวันนี้', askT.join('\n').includes('วิ่ง'));
+
+  // ถามถึงคนอื่นด้วยการแท็กชื่อเขา — ต้องไม่กลายเป็นการบันทึกแทน
+  CURRENT_NAME = 'Milk';
+  const before = db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_ERK'`).get().n;
+  const askOther = await send(textEvent('U_MILK', '@Erk Sasin เมื่อวานออกกำลังอะไรบ้าง', {
+    mention: { mentionees: [{ index: 0, length: 10, userId: 'U_ERK', type: 'user' }] } }));
+  show('Milk แท็ก Erk ถามว่าเมื่อวานออกอะไร', askOther);
+  check('ถามถึงคนอื่นได้ ขึ้นชื่อเขา', askOther.join('\n').includes('Erk'));
+  check('ถามแล้วต้องไม่บันทึกรายการใหม่ให้',
+    db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_ERK'`).get().n === before);
+
+  // วันที่ยังไม่มีรายการ
+  const askOld = await send(tagBot('@Yes Cal 5 วันที่แล้วผมออกกำลังอะไร'));
+  show('Erk ถามวันที่ยังไม่มีรายการ', askOld);
+  check('ไม่มีรายการก็บอกตรง ๆ พร้อมวิธีลงย้อนหลัง',
+    askOld.join('\n').includes('ยังไม่มีรายการ') && askOld.join('\n').includes('14 วัน'));
+
+  // ประโยคที่มีตัวเลขยังต้องเช็คอินได้เหมือนเดิม ถึงจะมีคำถามปนอยู่
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_ERK' AND logged_date=?`).run(today);
+  geminiReply = { is_workout: true, activity: 'วิ่ง', duration_min: 30, kcal: 300, has_screen_data: false };
+  const stillLogs = await send(textEvent('U_ERK', 'วิ่ง 5 กม. กี่แคลนะ'));
+  show('Erk พิมพ์ "วิ่ง 5 กม. กี่แคลนะ" (มีตัวเลข = ยังเป็นการเช็คอิน)', stillLogs);
+  check('มีตัวเลขแล้วยังเช็คอินได้ตามเดิม',
+    db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_ERK' AND logged_date=?`).get(today).n === 1);
+}
+
 // ---- แชร์นาฬิกาเป็นรายห้อง ----
 // สองเคสจริงวันที่ 25 ส.ค.
 //   "ของแม่ไม่โชว์"  = แม่เชื่อมนาฬิกาแต่ไม่เคยพิมพ์ "ตั้งเป้า" เลยไม่มีแถวใน users แล้วถูกกรองทิ้ง

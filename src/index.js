@@ -1966,9 +1966,15 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   const dateOverride = back.days && looksLikeWorkout(back.rest) ? bkkDateOffset(-back.days) : null;
 
   const botId = await getBotUserId(env);
+  const someoneElse = mentionees.map((m) => m.userId).find((u) => u && u !== botId && u !== userId);
+
+  // ถามว่าเช็คอินอะไรไว้ ต้องมาก่อนทางบันทึกทุกทาง ไม่งั้นคำถามจะถูกอ่านเป็นการรายงาน
+  if (isHistoryQuestion(bare)) {
+    return replyWorkoutHistory(env, event, chatId, someoneElse || userId, back.days, userId);
+  }
 
   // แท็กชื่อเพื่อนพร้อมเล่าว่าเขาออกอะไรมา = บันทึกแทนให้ (เพื่อนขี้เกียจพิมพ์เองก็ยังนับได้)
-  const onBehalf = mentionees.map((m) => m.userId).find((u) => u && u !== botId && u !== userId);
+  const onBehalf = someoneElse;
   if (onBehalf && back.rest.length <= 120 && !isVagueWorkoutWord(back.rest) && looksLikeWorkout(back.rest)) {
     return logForMember(env, event, chatId, userId, onBehalf, back.rest, dateOverride);
   }
@@ -1982,6 +1988,44 @@ async function handleChallengeText(env, event, chatId, userId, text) {
   if (text.length > 120 || !looksLikeWorkout(text)) return;
 
   return logWorkoutFromText(env, event, chatId, userId, text, dateOverride);
+}
+
+// ตอบว่าวันนั้นเช็คอินอะไรไว้บ้าง — อ่านอย่างเดียว ไม่แตะข้อมูลใคร
+async function replyWorkoutHistory(env, event, chatId, targetUserId, days, askedBy) {
+  const date = bkkDateOffset(-(days || 0));
+  const rows = (await env.DB.prepare(
+    `SELECT activity, duration_min, kcal FROM workouts
+      WHERE chat_id = ? AND line_user_id = ? AND logged_date = ? ORDER BY id`
+  ).bind(chatId, targetUserId, date).all()).results;
+
+  const member = await env.DB.prepare(
+    "SELECT display_name FROM challenge_members WHERE chat_id = ? AND line_user_id = ?"
+  ).bind(chatId, targetUserId).first();
+  const who = targetUserId === askedBy ? "คุณ" : (member?.display_name || "เขา");
+  const when = `${dayWordTH(days || 0)} (${thaiDateText(date)})`;
+
+  if (!rows.length) {
+    return lineReply(env, event.replyToken,
+      `${when} ยังไม่มีรายการของ${who}ครับ 🤔\n` +
+      (targetUserId === askedBy
+        ? 'ถ้าลืมลง พิมพ์ได้เลยเช่น "เมื่อวานวิ่ง 5 กม." (ย้อนหลังได้ถึง 14 วัน)'
+        : 'ให้เจ้าตัวพิมพ์เอง หรือแท็กชื่อเขาพร้อมบอกว่าออกอะไรมาก็บันทึกแทนได้'));
+  }
+
+  const lines = rows.map((r, i) => {
+    const bits = [];
+    if (r.duration_min) bits.push(`${r.duration_min} นาที`);
+    if (r.kcal) bits.push(`${r.kcal} kcal`);
+    return `${i + 1}. ${r.activity}${bits.length ? " — " + bits.join(" · ") : ""}`;
+  });
+  const kcal = rows.reduce((n, r) => n + (r.kcal || 0), 0);
+  const min = rows.reduce((n, r) => n + (r.duration_min || 0), 0);
+  const total = [`รวม ${rows.length} รายการ`];
+  if (min) total.push(`${min} นาที`);
+  if (kcal) total.push(`${kcal} kcal`);
+
+  return lineReply(env, event.replyToken,
+    [`${who === "คุณ" ? "" : who + " "}${when} 💪`, "", ...lines, "", total.join(" · ")].join("\n"));
 }
 
 // บันทึกแทนเพื่อนที่ขี้เกียจพิมพ์เอง — แท็กชื่อเขาแล้วเล่าว่าเขาออกอะไรมา
@@ -2083,6 +2127,22 @@ function isBackdateOnly(text) {
   const { days, rest } = parseBackdate(text);
   return days > 0 && rest.replace(FILLER, "").trim() === "";
 }
+
+// "ถามว่าเช็คอินอะไรไว้" ≠ "เช็คอินใหม่"
+// เจอจริง 26 ส.ค.: Erk แท็กบอทถามว่า "เมื่อวานผมออกกำลัง อะไรนะ"
+// แล้วบอทตอบว่าไม่เข้าใจ เพราะข้อความไม่มีตัวเลขเลยตกด่านเช็คอิน
+// ต้องเช็คก่อนทางบันทึกเสมอ ไม่งั้นคำถามจะถูกอ่านเป็นการรายงาน
+const QUESTION_HINTS = /อะไร|บ้าง|กี่|เท่าไ|ไหม|มั้ย|มัย|หรือเปล่า|รึเปล่า|ยังไง|\?/;
+const HISTORY_SUBJECT = /ออกกำลัง|ออกอะไร|ออกไร|เช็คอิน|บันทึก|ลงอะไร|ลงไร|กิจกรรม|เล่นอะไร/;
+function isHistoryQuestion(text) {
+  const { rest } = parseBackdate(text);
+  // มีตัวเลข = กำลังรายงานว่าทำอะไรมา ไม่ใช่ถาม ("วิ่ง 5 กม. กี่แคล" ต้องยังเช็คอินได้)
+  if (rest.length > 60 || /\d/.test(rest)) return false;
+  return QUESTION_HINTS.test(rest) && HISTORY_SUBJECT.test(rest);
+}
+
+const dayWordTH = (days) =>
+  days === 0 ? "วันนี้" : days === 1 ? "เมื่อวาน" : days === 2 ? "วานซืน" : `${days} วันที่แล้ว`;
 
 // คำที่บ่งชี้ว่าอาจเป็นการรายงานออกกำลังกาย (กรองหยาบ ๆ ก่อนถาม AI)
 const WORKOUT_HINTS = /วิ่ง|เดิน|เวท|ยกน้ำหนัก|ยิม|ฟิตเนส|โยคะ|พิลาทิส|ว่ายน้ำ|ปั่น|จักรยาน|คาร์ดิโอ|ซ้อม|ออกกำลัง|เต้น|กระโดดเชือก|ชกมวย|มวย|แบด|ฟุตบอล|บาส|เทนนิส|กอล์ฟ|ตีแบด|คลาส|บอดี้|สควอท|วิดพื้น|ซิทอัพ|แพลงก์|ลู่|ลาน|กม\.?|ก\.ม\.|กิโล|นาที|ชม\.?|ชั่วโมง|รอบ|เซ็ต|body\s*pump|workout|gym|run|walk|yoga|pilates|swim|bike|cardio|hiit|crossfit|weight|training|zumba|muay/i;
@@ -2551,6 +2611,10 @@ async function replyWhenTagged(env, event, chatId, userId, restText) {
     }
   }
 
+  if (restText && isHistoryQuestion(restText)) {
+    return replyWorkoutHistory(env, event, chatId, userId, parseBackdate(restText).days, userId);
+  }
+
   // แท็กมาพร้อมเล่าว่าออกอะไร — บันทึกให้เลย ไม่ต้องให้พิมพ์ใหม่
   // ("@Yes Cal เมื่อวานเดิน 5 km + ไดร์ฟกอล์ฟ 700 แคล" ต้องจบที่เช็คอิน ไม่ใช่ตอบงง)
   if (restText && restText.length <= 120 && !isVagueWorkoutWord(restText) &&
@@ -2614,6 +2678,7 @@ function challengeHelpText() {
     "เข้าร่วม — สมัครเข้าชาเลนจ์ (พิมพ์กันคนละครั้ง)",
     "วันนี้ — ดูว่าใครออกแล้ว ใครยังไม่ออก",
     "สมาชิก — ดูรายชื่อคนที่เข้าร่วมทั้งหมด",
+    "เมื่อวานออกกำลังอะไร — ดูว่าวันนั้นเช็คอินอะไรไว้บ้าง (แท็กชื่อเพื่อนเพื่อถามของเขา)",
     "ลบ — ลบรายการเช็คอินของตัวเอง (แท็กชื่อ/reply เพื่อลบของเพื่อน)",
     "เมื่อวาน / วานซืน / 3 วันที่แล้ว — ย้ายรายการไปเป็นของวันนั้น",
     "ย้ายกลับ — กู้คืนการย้ายวันที่ครั้งล่าสุด",
