@@ -995,6 +995,52 @@ console.log('\n--- ถามว่าเช็คอินอะไรไว้ 
     db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_ERK' AND logged_date=?`).get(today).n === 1);
 }
 
+// ---- เล่ารายละเอียดแยกหลายข้อความแล้วมาแท็กปิดท้าย ----
+// เจอจริง 27 ส.ค. กลุ่ม Lai & Kids: Jenny พิมพ์ "Golf" แล้ว "Driving range 2 hr" แล้วค่อยแท็ก
+// "@Yes Cal" เฉย ๆ — บอทเห็นแค่ข้อความที่แท็กมา (ว่างเปล่า) เลยตอบว่าไม่เข้าใจ
+// ต้องพิมพ์ทุกอย่างรวมกันมาในข้อความเดียวถึงจะสำเร็จ ("เราจะต้องทะเลาะกับมันทุกวันเลยหรอ")
+console.log('\n--- เล่าแยกหลายข้อความแล้วแท็กปิดท้าย ---');
+{
+  const tagBotBare = () => textEvent('U_JENNY', '@Yes Cal', {
+    mention: { mentionees: [{ index: 0, length: 8, userId: 'U_BOT', type: 'user' }] } });
+
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_JENNY'`).run();
+  CURRENT_NAME = 'Jenny T.';
+  await send(textEvent('U_JENNY', 'เข้าร่วม'));
+
+  geminiReply = { is_workout: true, activity: 'ไดร์ฟกอล์ฟ', duration_min: 120, kcal: null, has_screen_data: false };
+
+  show('Jenny พิมพ์ "Golf" เดี่ยว ๆ (ไม่มีตัวเลข ไม่ตรงคำกระตุ้น — เงียบ)', await send(textEvent('U_JENNY', 'Golf')));
+  show('Jenny พิมพ์ "Driving range 2 hr" เดี่ยว ๆ (มีตัวเลขแต่ยังไม่ได้แท็ก — เงียบเหมือนกัน)',
+    await send(textEvent('U_JENNY', 'Driving range 2 hr')));
+  check('สองข้อความนั้นยังไม่ถูกบันทึกเป็นรายการ',
+    db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_JENNY'`).get().n === 0);
+
+  const tagged = await send(tagBotBare());
+  show('Jenny แท็ก "@Yes Cal" เฉย ๆ ต่อท้าย', tagged);
+  const t = tagged.join('\n');
+  check('รวมสองข้อความก่อนหน้าแล้วเช็คอินให้ ไม่ตอบว่าไม่เข้าใจ', !t.includes('เรียกผมเหรอ'));
+  check('เช็คอินไดร์ฟกอล์ฟ 2 ชม. ให้สำเร็จ', t.includes('ไดร์ฟกอล์ฟ') && t.includes('120 นาที'));
+  check('บันทึกลง workouts จริง',
+    db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_JENNY'`).get().n === 1);
+
+  // ใช้ไปแล้วต้องเคลียร์ทิ้ง ไม่งั้นแท็กเปล่า ๆ รอบถัดไปจะเอาบริบทเก่ามาปนซ้ำ
+  const again = await send(tagBotBare());
+  show('Jenny แท็กเปล่า ๆ อีกรอบ (ไม่มีข้อความใหม่ค้างแล้ว)', again);
+  check('ครั้งที่สองไม่มีบริบทให้ใช้ ต้องตอบว่าไม่เข้าใจตามปกติ', again.join('\n').includes('เรียกผมเหรอ'));
+  check('ไม่ได้บันทึกซ้ำรายการเดิม',
+    db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_JENNY'`).get().n === 1);
+
+  // คุยเล่นเฉย ๆ ไม่เกี่ยวกับการออกกำลังกาย ต่อให้ถูกเก็บไว้ก็ต้องไม่ถูกดึงมาเช็คอินมั่ว
+  db.prepare(`DELETE FROM workouts WHERE line_user_id='U_JENNY'`).run();
+  await send(textEvent('U_JENNY', 'วันนี้อากาศร้อนมาก'));
+  const idleTag = await send(tagBotBare());
+  show('Jenny คุยเล่นเรื่องอากาศ แล้วแท็กบอทเฉย ๆ', idleTag);
+  check('ข้อความคุยเล่นไม่ทำให้เช็คอินมั่ว', idleTag.join('\n').includes('เรียกผมเหรอ'));
+  check('ไม่มีรายการถูกสร้างขึ้นมาลอย ๆ',
+    db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_JENNY'`).get().n === 0);
+}
+
 // ---- แชร์นาฬิกาเป็นรายห้อง ----
 // สองเคสจริงวันที่ 25 ส.ค.
 //   "ของแม่ไม่โชว์"  = แม่เชื่อมนาฬิกาแต่ไม่เคยพิมพ์ "ตั้งเป้า" เลยไม่มีแถวใน users แล้วถูกกรองทิ้ง

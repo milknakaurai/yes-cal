@@ -1003,6 +1003,61 @@ async function chatMembers(env, chatId) {
   ).bind(chatId).all()).results;
 }
 
+// จำข้อความที่ยังไม่รู้จะทำอะไรกับมันไว้ชั่วคราว (ไม่กี่นาที ไม่กี่บรรทัดล่าสุดต่อคนต่อห้อง)
+// เผื่อคนเล่ารายละเอียดแยกเป็นหลายข้อความ แล้วมาแท็กบอทปิดท้ายทีเดียว
+// (เจอจริง 27 ส.ค.: "Golf" + "Driving range 2 hr" + "@Yes Cal" คนละข้อความ
+//  บอทเห็นแค่ข้อความที่แท็กมา ซึ่งว่างเปล่า เลยตอบว่าไม่เข้าใจ)
+let chatScratchReady = false;
+async function ensureChatScratch(env) {
+  if (chatScratchReady) return;
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS chat_scratch (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       chat_id TEXT NOT NULL, line_user_id TEXT NOT NULL, text TEXT NOT NULL,
+       created_at TEXT DEFAULT (datetime('now')))`
+  ).run();
+  chatScratchReady = true;
+}
+
+const SCRATCH_WINDOW_MIN = 10;
+const SCRATCH_KEEP = 5;
+
+async function rememberScratch(env, chatId, userId, text) {
+  const t = String(text || "").trim();
+  if (!t || t.length > 200) return; // ยาวเกินไม่ใช่ข้อความสั้น ๆ เล่ารายละเอียดทีละท่อนแบบที่ฟีเจอร์นี้เล็ง
+  await ensureChatScratch(env);
+  await env.DB.prepare(
+    `INSERT INTO chat_scratch (chat_id, line_user_id, text) VALUES (?, ?, ?)`
+  ).bind(chatId, userId, t).run();
+  // เก็บสั้น ๆ พอ — ไม่ใช่ที่เก็บประวัติแชท ล้างของเก่า/เกินโควตาทุกครั้งที่มีของใหม่เข้า
+  await env.DB.prepare(
+    `DELETE FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?
+       AND (julianday('now') - julianday(created_at)) * 1440 > ?`
+  ).bind(chatId, userId, SCRATCH_WINDOW_MIN).run();
+  await env.DB.prepare(
+    `DELETE FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?
+       AND id NOT IN (SELECT id FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?
+                        ORDER BY id DESC LIMIT ?)`
+  ).bind(chatId, userId, chatId, userId, SCRATCH_KEEP).run();
+}
+
+async function recentScratch(env, chatId, userId) {
+  await ensureChatScratch(env);
+  const rows = (await env.DB.prepare(
+    `SELECT text FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?
+       AND (julianday('now') - julianday(created_at)) * 1440 <= ?
+      ORDER BY id`
+  ).bind(chatId, userId, SCRATCH_WINDOW_MIN).all()).results;
+  return rows.map((r) => r.text);
+}
+
+// เคลียร์ทิ้งทันทีที่เอาไปใช้บันทึกสำเร็จแล้ว กันเอาบริบทเก่ามาปนกับรอบถัดไป
+async function clearScratch(env, chatId, userId) {
+  await ensureChatScratch(env);
+  await env.DB.prepare(`DELETE FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?`)
+    .bind(chatId, userId).run();
+}
+
 async function getDayTotals(env, userId, date) {
   const row = await env.DB.prepare(
     `SELECT COALESCE(SUM(kcal),0) AS kcal, COALESCE(SUM(protein_g),0) AS protein_g,
@@ -1984,6 +2039,9 @@ async function handleChallengeText(env, event, chatId, userId, text) {
     return replyWhenTagged(env, event, chatId, userId, stripMentions(text, mentionees));
   }
 
+  // เก็บข้อความนี้ไว้ชั่วคราว เผื่อพิมพ์รายละเอียดแยกเป็นหลายท่อนแล้วมาแท็กบอทปิดท้าย
+  await rememberScratch(env, chatId, userId, bare);
+
   // กลุ่มใหญ่คุยกันเยอะ — กรองด้วยคำก่อน ไม่งั้นเปลืองโควตา Gemini และตอบมั่ว
   if (text.length > 120 || !looksLikeWorkout(text)) return;
 
@@ -2174,6 +2232,8 @@ async function handleChallengeImage(env, event, chatId, userId) {
 async function saveWorkoutAndReply(env, event, chatId, userId, result, source, dateOverride = null, loggedBy = null) {
   const day = dateOverride || bkkToday();
   const name = await ensureMember(env, chatId, userId, event.source);
+  // บันทึกสำเร็จแล้ว เคลียร์ข้อความที่ค้างไว้ กันบริบทเก่าเอามาปนกับรอบถัดไป
+  await clearScratch(env, chatId, userId);
   const already = await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM workouts WHERE chat_id = ? AND line_user_id = ? AND logged_date = ?"
   ).bind(chatId, userId, day).first();
@@ -2617,19 +2677,34 @@ async function replyWhenTagged(env, event, chatId, userId, restText) {
 
   // แท็กมาพร้อมเล่าว่าออกอะไร — บันทึกให้เลย ไม่ต้องให้พิมพ์ใหม่
   // ("@Yes Cal เมื่อวานเดิน 5 km + ไดร์ฟกอล์ฟ 700 แคล" ต้องจบที่เช็คอิน ไม่ใช่ตอบงง)
-  if (restText && restText.length <= 120 && !isVagueWorkoutWord(restText) &&
-      (looksLikeWorkout(restText) || /\d/.test(restText))) {
-    if (isBackdateOnly(restText)) {
+  const tryLogTagged = async (candidate) => {
+    if (!candidate || candidate.length > 200 || isVagueWorkoutWord(candidate) ||
+        !(looksLikeWorkout(candidate) || /\d/.test(candidate))) {
+      return null;
+    }
+    if (isBackdateOnly(candidate)) {
       return moveLastWorkoutBack(env, event, chatId, userId, {
-        days: parseBackdate(restText).days,
+        days: parseBackdate(candidate).days,
         quotedMessageId: quotedId,
         mentionedIds: (event.message?.mention?.mentionees || []).map((m) => m.userId).filter(Boolean),
       });
     }
-    const back = parseBackdate(restText);
-    const logged = await logWorkoutFromText(
-      env, event, chatId, userId, restText, back.days ? bkkDateOffset(-back.days) : null, true);
-    if (logged !== null) return logged;
+    const back = parseBackdate(candidate);
+    return logWorkoutFromText(
+      env, event, chatId, userId, candidate, back.days ? bkkDateOffset(-back.days) : null, true);
+  };
+
+  const direct = await tryLogTagged(restText);
+  if (direct !== null) return direct;
+
+  // ข้อความที่แท็กมาไม่พอจะเช็คอิน — ลองรวมกับข้อความก่อนหน้าที่คนนี้เพิ่งพิมพ์ในห้องนี้เข้าด้วยกัน
+  // เผื่อเล่ารายละเอียดแยกเป็นหลายข้อความก่อนมาแท็กปิดท้าย
+  // (เจอจริง 27 ส.ค.: "Golf" + "Driving range 2 hr" + "@Yes Cal" คนละข้อความ)
+  const buffered = await recentScratch(env, chatId, userId);
+  if (buffered.length) {
+    const combined = [...buffered, restText].filter(Boolean).join(" ").trim();
+    const viaBuffer = await tryLogTagged(combined);
+    if (viaBuffer !== null) return viaBuffer;
   }
 
   return lineReply(env, event.replyToken, [
