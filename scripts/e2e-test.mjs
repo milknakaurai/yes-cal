@@ -611,6 +611,10 @@ console.log('\n--- เช็คอินอัตโนมัติจากน�
   rows.forEach((r) => console.log(`   ${r.logged_date} ${r.activity} ${r.duration_min} น. ${r.kcal} แคล [${r.message_id}]`));
   check('เช็คอินให้จากนาฬิกาจริง', rows.length > before);
   check('บันทึกที่มาเป็น device', rows.every((r) => r.message_id.startsWith('whoop:')));
+  // ซิงก์ไม่ push บอกในกลุ่ม (ตั้งใจ) แต่รายการต้องติดสัญลักษณ์นาฬิกาไว้ในชื่อกิจกรรม
+  // ไม่งั้นพอไปโผล่ในคำสั่ง "เมื่อวานออกอะไร"/"ลบ"/หน้าเว็บ จะดูเหมือนพิมพ์เองแล้วคนในกลุ่มงงว่ามาจากไหน
+  // (เจอจริง 27 ส.ค.: Milk/Charlie เชื่อม Whoop ใน MCL FOOD แต่รายการไปโผล่ใน Lai & Kids แบบไม่บอกที่มา)
+  check('ชื่อกิจกรรมติดสัญลักษณ์นาฬิกาไว้ให้เห็นชัด', rows.every((r) => r.activity.startsWith('⌚ ')));
   check('ไม่เอารายการเดินเบา ๆ (strain 1.4) มาเช็คอิน',
     !rows.some((r) => r.activity === 'เดิน' && r.duration_min === 40));
   check('เฉพาะย้อนหลังไม่เกิน 2 วัน',
@@ -631,6 +635,7 @@ console.log('\n--- เช็คอินอัตโนมัติจากน�
     check('ทับด้วยตัวเลขจากนาฬิกา', rows2[0]?.duration_min === w.duration_min);
     check('ยังคง message_id ของรูปไว้ (reply แก้วันที่ยังใช้ได้)',
       rows2[0]?.message_id === 'm-photo-1' && String(rows2[0]?.device_id).startsWith('whoop:'));
+    check('ทับด้วยตัวเลขนาฬิกาแล้วก็ยังติดสัญลักษณ์ไว้เหมือนกัน', String(rows2[0]?.activity).startsWith('⌚ '));
     await send(textEvent('U_PEACH', 'ซิงก์'));
     check('ซิงก์ซ้ำหลังทับแล้ว ไม่เพิ่มแถว',
       db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_PEACH' AND logged_date=?`).get(w.date).n === 1);

@@ -1101,6 +1101,10 @@ async function syncWearableCheckins(env) {
       if (w.date < from) continue;
       if (!W.countsAsCheckin(w).ok) continue;
       const key = `${link.provider}:${w.external_id}`;
+      // ติดสัญลักษณ์นาฬิกาให้ชัดเจนตรงชื่อกิจกรรม — sync ไม่ push แจ้งในกลุ่ม (ตั้งใจ กันเปลืองโควตา)
+      // รายการจะ "โผล่" มาเฉยๆ ในวันนี้/อันดับ ไม่มีใครบอกที่มา คนในกลุ่มงงว่าไปเช็คอินจากไหน
+      // ให้อย่างน้อยตรงชื่อกิจกรรม (เมื่อวานออกอะไร / ลบ / หน้าเว็บ) บอกว่ามาจากนาฬิกาเอง
+      const activityLabel = `⌚ ${w.activity}`;
       for (const { chat_id } of chats) {
         const dup = await env.DB.prepare(
           `SELECT id FROM workouts WHERE chat_id = ? AND (device_id = ? OR message_id = ?)`
@@ -1128,14 +1132,14 @@ async function syncWearableCheckins(env) {
           await env.DB.prepare(
             `UPDATE workouts SET activity = ?, duration_min = ?, kcal = COALESCE(?, kcal), device_id = ?
               WHERE id = ?`
-          ).bind(w.activity, w.duration_min, w.kcal || null, key, same.id).run();
+          ).bind(activityLabel, w.duration_min, w.kcal || null, key, same.id).run();
           continue;
         }
 
         await env.DB.prepare(
           `INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, message_id, device_id, logged_date)
            VALUES (?, ?, ?, ?, ?, 'device', ?, ?, ?)`
-        ).bind(chat_id, link.line_user_id, w.activity, w.duration_min || null, w.kcal || null, key, key, w.date).run();
+        ).bind(chat_id, link.line_user_id, activityLabel, w.duration_min || null, w.kcal || null, key, key, w.date).run();
         added++;
       }
     }
