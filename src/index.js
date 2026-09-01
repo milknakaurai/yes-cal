@@ -395,9 +395,56 @@ async function maybeLogFoodFromText(env, event, user, text) {
     // ต่อ Gemini ไม่ได้ — บอกตรง ๆ ดีกว่าเงียบ
     return lineReply(env, event.replyToken, "ขอโทษครับ ตอนนี้ต่อระบบประเมินแคลไม่ได้ ลองอีกครั้งนะครับ 🙏");
   }
-  if (!result.is_food || !result.items?.length) return; // ไม่ใช่อาหาร → เงียบไว้ ไม่รบกวนแชท
+  if (!result.is_food || !result.items?.length) {
+    // อาจไม่ใช่รายการอาหารใหม่ แต่เป็นรายละเอียดเพิ่มเติมของมื้อที่เพิ่งบันทึกไป
+    // (เจอจริง: บันทึก "น้ำข้าวโพด" แล้วพิมพ์ต่อว่า "ไม่ใส่น้ำตาล" — เดิมบอทเงียบใส่)
+    return tryCorrectRecentMeal(env, event, user, text);
+  }
 
   return saveMealsAndReply(env, event, user, result, "text");
+}
+
+// มื้อล่าสุดของคนนี้ ถ้าเพิ่งบันทึกไปไม่นาน — ใช้เป็นเป้าหมายตอนพิมพ์แก้ไขตามมาทีหลัง
+// จำกัดเวลาไว้กันพิมพ์อะไรก็ไม่เกี่ยวไปแก้ของเก่าที่ผ่านมานานแล้วโดยไม่ตั้งใจ
+const MEAL_CORRECTION_WINDOW_MIN = 15;
+async function recentMealForCorrection(env, userId) {
+  return env.DB.prepare(
+    `SELECT id, name, kcal, protein_g, carb_g, fat_g FROM meals
+      WHERE line_user_id = ?
+        AND (julianday('now') - julianday(created_at)) * 1440 <= ?
+      ORDER BY id DESC LIMIT 1`
+  ).bind(userId, MEAL_CORRECTION_WINDOW_MIN).first();
+}
+
+// ข้อความที่ Gemini บอกว่าไม่ใช่อาหารรายการใหม่ อาจเป็นการแก้ไขมื้อล่าสุดแทน
+// เช่น "ไม่ใส่น้ำตาล" "เอาแค่ครึ่งจาน" "ใส่ไข่ดาวด้วย" — ให้ประเมินรายการนั้นใหม่ทั้งหมด
+async function tryCorrectRecentMeal(env, event, user, text) {
+  if (text.length > 80) return; // คำแก้ไขสั้น ๆ พอ ยาวเกินนี้ไม่น่าใช่
+  const meal = await recentMealForCorrection(env, user.line_user_id);
+  if (!meal) return; // ไม่มีอะไรให้แก้ → เงียบไว้เหมือนเดิม
+
+  const result = await geminiEstimate(env, [{ text: foodCorrectionPrompt(meal, text) }]);
+  if (result?.__quota) return lineReply(env, event.replyToken, quotaText());
+  if (!result?.is_food || !result.items?.length) return; // ไม่เกี่ยวกับการแก้ไข → เงียบไว้เหมือนเดิม
+
+  const it = result.items[0];
+  const kcal = Math.round(it.kcal || 0);
+  await env.DB.prepare(
+    `UPDATE meals SET name = ?, kcal = ?, protein_g = ?, carb_g = ?, fat_g = ? WHERE id = ?`
+  ).bind(String(it.name).slice(0, 100), kcal, round1(it.protein_g), round1(it.carb_g), round1(it.fat_g), meal.id).run();
+
+  const totals = await getDayTotals(env, user.line_user_id, bkkToday());
+  const diff = kcal - Math.round(meal.kcal);
+  const diffText = diff === 0 ? "" : ` (${diff > 0 ? "+" : ""}${diff} kcal จากเดิม)`;
+
+  const lines = [
+    "แก้ไขให้แล้วครับ ✏️",
+    `• ${it.name} ≈ ${fmtNum(kcal)} kcal (P${Math.round(it.protein_g || 0)}/C${Math.round(it.carb_g || 0)}/F${Math.round(it.fat_g || 0)})${diffText}`,
+    "",
+    statusLine(user, totals),
+  ];
+  if (result.note) lines.splice(2, 0, `(${result.note})`);
+  return lineReply(env, event.replyToken, lines.join("\n"));
 }
 
 async function handleImageMessage(event, env, userId) {
@@ -750,6 +797,16 @@ function foodPromptForText(text) {
 ถ้าข้อความนี้เป็นการบอกว่ากิน/ดื่มอะไร ให้ประเมินแคลอรี่และสารอาหาร (protein_g, carb_g, fat_g) ของทุกรายการ โดยใช้ขนาดเสิร์ฟไทยทั่วไปถ้าไม่ระบุปริมาณ ถ้าระบุจำนวน (เช่น 2 จาน, 2 ฟอง) ให้คูณตามจำนวน
 ${NUTRITION_HINTS}
 ถ้าเป็นแค่บทสนทนาทั่วไป คำถาม หรือไม่เกี่ยวกับการกินอาหาร ให้ is_food = false`;
+}
+
+function foodCorrectionPrompt(meal, text) {
+  return `คุณเป็นนักโภชนาการผู้เชี่ยวชาญอาหารไทย ก่อนหน้านี้ผู้ใช้บันทึกไว้ว่ากิน "${meal.name}" ประมาณ ${Math.round(meal.kcal)} kcal (P${Math.round(meal.protein_g || 0)}/C${Math.round(meal.carb_g || 0)}/F${Math.round(meal.fat_g || 0)})
+
+ตอนนี้ผู้ใช้พิมพ์เพิ่มเติมมาว่า: "${text}"
+
+ถ้าข้อความนี้เป็นการแก้ไขหรือให้รายละเอียดเพิ่มเติมเกี่ยวกับรายการที่เพิ่งบันทึกไปนั้น (เช่น ไม่ใส่น้ำตาล, ไม่ใส่ผงชูรส, เอาแค่ครึ่งจาน, ใส่ไข่ดาวเพิ่ม) ให้ประเมินแคลอรี่และสารอาหารของรายการนั้นใหม่ทั้งหมด (ไม่ใช่บวกลบเอง) แล้วคืนเป็นรายการเดียวใน items โดยปรับชื่อให้ตรงกับของจริงด้วย
+${NUTRITION_HINTS}
+ถ้าข้อความนี้ไม่ได้เกี่ยวกับการแก้ไขรายการที่เพิ่งบันทึกไป (เช่นเป็นเรื่องอื่น หรือเป็นการบอกอาหารรายการใหม่ต่างหาก) ให้ is_food = false`;
 }
 
 function foodPromptForImage() {

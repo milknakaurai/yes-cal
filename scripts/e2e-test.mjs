@@ -46,6 +46,7 @@ const env = {
 const replies = [];
 let geminiReply = null;
 let suggestReply = null;
+let correctionReply = null;
 let lastGeminiPrompt = '';
 // fixture เก็บวันที่จริง (19-23 ส.ค.) แต่ตัวซิงก์รับเฉพาะย้อนหลัง 2 วัน —
 // เลื่อนเวลาทุกรายการให้รายการใหม่สุดกลายเป็น "วันนี้" เทสจะได้ไม่เน่าตามปฏิทิน
@@ -67,7 +68,10 @@ globalThis.fetch = async (url, opts) => {
     if (geminiDown) return { ok: false, status: 429, text: async () => 'quota', json: async () => ({}) };
     lastGeminiPrompt = String(opts?.body || '');
     const wantsSuggestion = lastGeminiPrompt.includes('ผู้ช่วยด้านโภชนาการ');
-    const payload = wantsSuggestion && suggestReply ? suggestReply : geminiReply;
+    const wantsCorrection = lastGeminiPrompt.includes('ก่อนหน้านี้ผู้ใช้บันทึกไว้ว่ากิน');
+    const payload = wantsSuggestion && suggestReply ? suggestReply
+      : wantsCorrection && correctionReply ? correctionReply
+      : geminiReply;
     return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }) };
   }
   if (u.includes('whoop.com/oauth/oauth2/token') || u === 'https://oauth2.googleapis.com/token') {
@@ -434,6 +438,57 @@ const noGoal = await send(dmEvent('U_NEW', 'กินอะไรดี'));
 show('คนที่ยังไม่ได้ตั้งเป้า', noGoal);
 suggestReply = null;
 CURRENT_NAME = 'Milk';
+
+// ---- แก้ไขมื้อล่าสุดด้วยข้อความตามหลัง ----
+// เจอจริง กลุ่ม MCL FOOD: Milk พิมพ์ "น้ำข้าวโพด" บันทึกแล้ว ต่อมาพิมพ์ "ไม่ใส่น้ำตาล"
+// เดิม Gemini บอกว่าไม่ใช่อาหารรายการใหม่ (is_food: false) บอทเลยเงียบใส่ ไม่ปรับอะไรให้เลย
+console.log('\n--- แก้ไขมื้อล่าสุด ---');
+{
+  db.prepare(`DELETE FROM meals WHERE line_user_id='U_DM'`).run();
+
+  geminiReply = { is_food: true, items: [
+    { name: 'น้ำข้าวโพด 1 แก้ว (250ml)', kcal: 150, protein_g: 2, carb_g: 30, fat_g: 3 },
+  ], note: 'ประเมินจากน้ำข้าวโพดสูตรหวานน้อยทั่วไป' };
+  show('Milk พิมพ์ "น้ำข้าวโพด"', await send(dmEvent('U_DM', 'น้ำข้าวโพด')));
+
+  geminiReply = { is_food: false }; // Gemini เห็นว่าไม่ใช่รายการอาหารใหม่
+  correctionReply = { is_food: true, items: [
+    { name: 'น้ำข้าวโพด 1 แก้ว (250ml) ไม่ใส่น้ำตาล', kcal: 110, protein_g: 2, carb_g: 22, fat_g: 3 },
+  ] };
+  const fixed = await send(dmEvent('U_DM', 'ไม่ใส่น้ำตาล'));
+  show('Milk พิมพ์ต่อว่า "ไม่ใส่น้ำตาล"', fixed);
+  const f = fixed.join('\n');
+  check('ไม่เงียบใส่ ตอบว่าแก้ไขให้แล้ว', fixed.length > 0 && f.includes('แก้ไขให้แล้ว'));
+  check('ปรับแคลลงตามที่บอกเพิ่ม', f.includes('110 kcal'));
+  check('บอกส่วนต่างจากของเดิมด้วย', f.includes('-40 kcal'));
+
+  const row = db.prepare(`SELECT COUNT(*) AS n, kcal FROM meals WHERE line_user_id='U_DM'`).get();
+  check('อัปเดตแถวเดิม ไม่ได้เพิ่มแถวใหม่', row.n === 1);
+  check('ค่าที่เก็บจริงตรงกับที่ตอบ', row.kcal === 110);
+
+  // ข้อความที่ไม่เกี่ยวกับการแก้ไขต้องไม่ไปแตะมื้อเดิม
+  geminiReply = { is_food: false };
+  correctionReply = { is_food: false };
+  const chat = await send(dmEvent('U_DM', 'วันนี้อากาศดีจัง'));
+  show('Milk พิมพ์คุยเล่นไม่เกี่ยวกับอาหาร', chat);
+  check('คุยเล่นเฉย ๆ บอทยังเงียบเหมือนเดิม', chat.length === 0);
+  check('มื้อเดิมไม่ถูกแตะต้อง',
+    db.prepare(`SELECT kcal FROM meals WHERE line_user_id='U_DM'`).get().kcal === 110);
+  correctionReply = null;
+
+  // เกินเวลาที่กำหนดไว้แล้ว ไม่ควรย้อนไปแก้ของเก่า
+  db.prepare(`UPDATE meals SET created_at = datetime('now', '-30 minutes') WHERE line_user_id='U_DM'`).run();
+  geminiReply = { is_food: false };
+  correctionReply = { is_food: true, items: [{ name: 'ไม่ควรถูกใช้', kcal: 1, protein_g: 0, carb_g: 0, fat_g: 0 }] };
+  const stale = await send(dmEvent('U_DM', 'ไม่ใส่น้ำตาล'));
+  show('พิมพ์แก้ไขหลังผ่านไปนานแล้ว', stale);
+  check('เกินหน้าต่างเวลาแล้ว ไม่แก้ของเก่าให้', stale.length === 0);
+  check('มื้อเดิมยังเหมือนเดิม',
+    db.prepare(`SELECT kcal FROM meals WHERE line_user_id='U_DM'`).get().kcal === 110);
+  correctionReply = null;
+
+  db.prepare(`DELETE FROM meals WHERE line_user_id='U_DM'`).run();
+}
 
 // ---- กลุ่มที่สอง ไว้พิสูจน์ว่าลิงก์ของแต่ละกลุ่มเห็นแค่ของตัวเอง ----
 CURRENT_NAME = 'Ann';
