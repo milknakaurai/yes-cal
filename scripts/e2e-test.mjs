@@ -490,6 +490,50 @@ console.log('\n--- แก้ไขมื้อล่าสุด ---');
   db.prepare(`DELETE FROM meals WHERE line_user_id='U_DM'`).run();
 }
 
+// ---- แท็กบอทให้หามื้อเก่ามาแก้ ถึงจะเกิน 15 นาทีไปแล้ว ----
+// เจ้าของขอไว้: "เกิน 15 นาที ถ้า mention หามัน ให้มันแก้ได้ที"
+console.log('\n--- แท็กบอทแก้มื้อเก่าเกิน 15 นาที ---');
+{
+  CURRENT_NAME = 'Milk';
+  db.prepare(`DELETE FROM meals WHERE line_user_id='U_MCL'`).run();
+  db.prepare(`INSERT OR REPLACE INTO users (line_user_id, display_name, target_kcal, target_protein_g)
+              VALUES ('U_MCL','Milk',2600,140)`).run();
+
+  const tagBot = (text) => textEventIn('G_MCL', 'U_MCL', text, {
+    mention: { mentionees: [{ index: 0, length: 8, userId: 'U_BOT', type: 'user' }] } });
+
+  geminiReply = { is_food: true, items: [
+    { name: 'น้ำข้าวโพด 1 แก้ว (250ml)', kcal: 150, protein_g: 2, carb_g: 30, fat_g: 3 },
+  ] };
+  await send(textEventIn('G_MCL', 'U_MCL', 'น้ำข้าวโพด'));
+  // ย้อนเวลาบันทึกออกไปเกิน 15 นาที เหมือนเพิ่งนึกได้ทีหลัง
+  db.prepare(`UPDATE meals SET created_at = datetime('now', '-30 minutes') WHERE line_user_id='U_MCL'`).run();
+
+  geminiReply = { is_food: false };
+  const noTag = await send(textEventIn('G_MCL', 'U_MCL', 'ไม่ใส่น้ำตาล'));
+  show('เกิน 15 นาทีแล้ว พิมพ์เฉย ๆ ไม่แท็กบอท', noTag);
+  check('ไม่แท็ก + เกินเวลา ยังเงียบเหมือนเดิม (พฤติกรรมเดิมไม่เปลี่ยน)', noTag.length === 0);
+
+  correctionReply = { is_food: true, items: [
+    { name: 'น้ำข้าวโพด 1 แก้ว (250ml) ไม่ใส่น้ำตาล', kcal: 110, protein_g: 2, carb_g: 22, fat_g: 3 },
+  ] };
+  const tagged = await send(tagBot('@Yes Cal ไม่ใส่น้ำตาล'));
+  show('แท็ก "@Yes Cal ไม่ใส่น้ำตาล" (เกิน 15 นาทีไปแล้ว)', tagged);
+  const t = tagged.join('\n');
+  check('แท็กแล้วหาเจอ แก้ได้แม้เกิน 15 นาที', t.includes('แก้ไขให้แล้ว') && t.includes('110 kcal'));
+  const after = db.prepare(`SELECT COUNT(*) AS n, kcal FROM meals WHERE line_user_id='U_MCL'`).get();
+  check('อัปเดตแถวเดิม ไม่ได้เพิ่มแถวใหม่', after.n === 1 && after.kcal === 110);
+  correctionReply = null;
+
+  // แท็กมาแต่วันนี้ยังไม่เคยกินอะไรเลย — ถูกแท็กต้องตอบเสมอ ไม่เงียบใส่
+  db.prepare(`DELETE FROM meals WHERE line_user_id='U_MCL'`).run();
+  geminiReply = { is_food: false };
+  const taggedEmpty = await send(tagBot('@Yes Cal ไม่ใส่น้ำตาล'));
+  show('แท็กบอทตอนวันนี้ยังไม่มีรายการให้แก้เลย', taggedEmpty);
+  check('ถูกแท็กต้องตอบเสมอ ไม่เงียบใส่คนที่เรียก', taggedEmpty.length > 0);
+  check('บอกตรง ๆ ว่าไม่มีรายการให้แก้', taggedEmpty.join('\n').includes('ยังไม่มีรายการให้แก้'));
+}
+
 // ---- กลุ่มที่สอง ไว้พิสูจน์ว่าลิงก์ของแต่ละกลุ่มเห็นแค่ของตัวเอง ----
 CURRENT_NAME = 'Ann';
 await send(textEventIn('G2', 'U_ANN', 'ออกกำลังกาย'));

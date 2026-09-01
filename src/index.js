@@ -201,8 +201,15 @@ async function handleTextMessage(event, env, userId, chatId) {
   const weightMatch = text.match(/^(?:น้ำหนัก|นน\.?)\s*([\d.]+)\s*(?:กก|kg)?\.?$/i);
   if (weightMatch) return logWeight(env, event, user, parseFloat(weightMatch[1]));
 
+  // ถูกแท็กบอทมาด้วย → ตัดคำแท็กออก แล้วให้แก้มื้อเก่าได้แม้เกินหน้าต่าง 15 นาทีปกติ
+  // (เจ้าของขอไว้: "เกิน 15 นาที ถ้า mention หามัน ให้มันแก้ได้ที")
+  const mentionees = event.message?.mention?.mentionees || [];
+  const botId = await getBotUserId(env);
+  const mentioned = !!botId && mentionees.some((m) => m.userId === botId);
+  const bare = mentioned ? stripMentions(text, mentionees) : text;
+
   // ไม่ใช่คำสั่ง → ให้ Gemini ดูว่าเป็นการบอกว่ากินอะไรไหม
-  return maybeLogFoodFromText(env, event, user, text);
+  return maybeLogFoodFromText(env, event, user, bare, mentioned);
 }
 
 function greetingText() {
@@ -385,7 +392,7 @@ async function setProteinTarget(env, event, user, grams) {
 
 // ---------------------------------------------------------------- food logging
 
-async function maybeLogFoodFromText(env, event, user, text) {
+async function maybeLogFoodFromText(env, event, user, text, mentioned = false) {
   // กันข้อความคุยเล่นยาว ๆ ไม่ต้องเสียโควตา Gemini
   if (text.length > 200) return;
 
@@ -398,7 +405,7 @@ async function maybeLogFoodFromText(env, event, user, text) {
   if (!result.is_food || !result.items?.length) {
     // อาจไม่ใช่รายการอาหารใหม่ แต่เป็นรายละเอียดเพิ่มเติมของมื้อที่เพิ่งบันทึกไป
     // (เจอจริง: บันทึก "น้ำข้าวโพด" แล้วพิมพ์ต่อว่า "ไม่ใส่น้ำตาล" — เดิมบอทเงียบใส่)
-    return tryCorrectRecentMeal(env, event, user, text);
+    return tryCorrectRecentMeal(env, event, user, text, mentioned);
   }
 
   return saveMealsAndReply(env, event, user, result, "text");
@@ -406,8 +413,16 @@ async function maybeLogFoodFromText(env, event, user, text) {
 
 // มื้อล่าสุดของคนนี้ ถ้าเพิ่งบันทึกไปไม่นาน — ใช้เป็นเป้าหมายตอนพิมพ์แก้ไขตามมาทีหลัง
 // จำกัดเวลาไว้กันพิมพ์อะไรก็ไม่เกี่ยวไปแก้ของเก่าที่ผ่านมานานแล้วโดยไม่ตั้งใจ
+// widen = แท็กบอทมาตรง ๆ = ตั้งใจแก้แน่นอน ขยายไปหาได้ถึงมื้อล่าสุดของวันนี้ ไม่ต้องอยู่ในหน้าต่าง 15 นาที
 const MEAL_CORRECTION_WINDOW_MIN = 15;
-async function recentMealForCorrection(env, userId) {
+async function recentMealForCorrection(env, userId, widen = false) {
+  if (widen) {
+    return env.DB.prepare(
+      `SELECT id, name, kcal, protein_g, carb_g, fat_g FROM meals
+        WHERE line_user_id = ? AND eaten_date = ?
+        ORDER BY id DESC LIMIT 1`
+    ).bind(userId, bkkToday()).first();
+  }
   return env.DB.prepare(
     `SELECT id, name, kcal, protein_g, carb_g, fat_g FROM meals
       WHERE line_user_id = ?
@@ -418,14 +433,28 @@ async function recentMealForCorrection(env, userId) {
 
 // ข้อความที่ Gemini บอกว่าไม่ใช่อาหารรายการใหม่ อาจเป็นการแก้ไขมื้อล่าสุดแทน
 // เช่น "ไม่ใส่น้ำตาล" "เอาแค่ครึ่งจาน" "ใส่ไข่ดาวด้วย" — ให้ประเมินรายการนั้นใหม่ทั้งหมด
-async function tryCorrectRecentMeal(env, event, user, text) {
-  if (text.length > 80) return; // คำแก้ไขสั้น ๆ พอ ยาวเกินนี้ไม่น่าใช่
-  const meal = await recentMealForCorrection(env, user.line_user_id);
-  if (!meal) return; // ไม่มีอะไรให้แก้ → เงียบไว้เหมือนเดิม
+// mentioned = ถูกแท็กบอทมาตรง ๆ — ต้องตอบเสมอ ไม่เงียบใส่ (ขยายหน้าต่างเวลาด้วย)
+async function tryCorrectRecentMeal(env, event, user, text, mentioned = false) {
+  if (text.length > 80) { // คำแก้ไขสั้น ๆ พอ ยาวเกินนี้ไม่น่าใช่
+    return mentioned
+      ? lineReply(env, event.replyToken, 'พิมพ์สั้น ๆ บอกว่าจะแก้อะไรครับ เช่น "ไม่ใส่น้ำตาล" "เอาแค่ครึ่งจาน"')
+      : undefined;
+  }
+  const meal = await recentMealForCorrection(env, user.line_user_id, mentioned);
+  if (!meal) {
+    return mentioned
+      ? lineReply(env, event.replyToken, `วันนี้ ${user.display_name} ยังไม่มีรายการให้แก้เลยครับ`)
+      : undefined; // ไม่มีอะไรให้แก้ → เงียบไว้เหมือนเดิม
+  }
 
   const result = await geminiEstimate(env, [{ text: foodCorrectionPrompt(meal, text) }]);
   if (result?.__quota) return lineReply(env, event.replyToken, quotaText());
-  if (!result?.is_food || !result.items?.length) return; // ไม่เกี่ยวกับการแก้ไข → เงียบไว้เหมือนเดิม
+  if (!result?.is_food || !result.items?.length) {
+    return mentioned
+      ? lineReply(env, event.replyToken,
+          `ไม่แน่ใจว่าจะแก้ "${meal.name}" ยังไงดีครับ 🤔 ลองบอกให้ชัดขึ้น เช่น "ไม่ใส่น้ำตาล" "เอาแค่ครึ่งจาน"`)
+      : undefined; // ไม่เกี่ยวกับการแก้ไข → เงียบไว้เหมือนเดิม
+  }
 
   const it = result.items[0];
   const kcal = Math.round(it.kcal || 0);
