@@ -16,11 +16,22 @@ for (const stmt of sqlText.split(';')) {
 console.log('ตารางที่สร้าง:', db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r=>r.name).join(', '));
 
 // ---- shim ให้เหมือน D1 ----
+// breakTable: จำลองตารางพังชั่วคราว (ไว้เทสว่าบั๊กจุดเสริมไม่ทำให้ฟีเจอร์หลักตอบไม่ได้)
+let breakTable = null;
 const wrap = (sql) => ({
   bind: (...args) => ({
-    first: async () => { try { return db.prepare(sql).get(...args) ?? null; } catch (e) { throw new Error(`SQL(first) ${e.message} :: ${sql.slice(0,90)}`); } },
-    all:   async () => { try { return { results: db.prepare(sql).all(...args) }; } catch (e) { throw new Error(`SQL(all) ${e.message} :: ${sql.slice(0,90)}`); } },
-    run:   async () => { try { db.prepare(sql).run(...args); return { success: true }; } catch (e) { throw new Error(`SQL(run) ${e.message} :: ${sql.slice(0,90)}`); } },
+    first: async () => {
+      if (breakTable && sql.includes(breakTable)) throw new Error(`SQL(first) simulated failure on ${breakTable}`);
+      try { return db.prepare(sql).get(...args) ?? null; } catch (e) { throw new Error(`SQL(first) ${e.message} :: ${sql.slice(0,90)}`); }
+    },
+    all: async () => {
+      if (breakTable && sql.includes(breakTable)) throw new Error(`SQL(all) simulated failure on ${breakTable}`);
+      try { return { results: db.prepare(sql).all(...args) }; } catch (e) { throw new Error(`SQL(all) ${e.message} :: ${sql.slice(0,90)}`); }
+    },
+    run: async () => {
+      if (breakTable && sql.includes(breakTable)) throw new Error(`SQL(run) simulated failure on ${breakTable}`);
+      try { db.prepare(sql).run(...args); return { success: true }; } catch (e) { throw new Error(`SQL(run) ${e.message} :: ${sql.slice(0,90)}`); }
+    },
   }),
   first: async () => db.prepare(sql).get() ?? null,
   all:   async () => ({ results: db.prepare(sql).all() }),
@@ -532,6 +543,33 @@ console.log('\n--- แท็กบอทแก้มื้อเก่าเก�
   show('แท็กบอทตอนวันนี้ยังไม่มีรายการให้แก้เลย', taggedEmpty);
   check('ถูกแท็กต้องตอบเสมอ ไม่เงียบใส่คนที่เรียก', taggedEmpty.length > 0);
   check('บอกตรง ๆ ว่าไม่มีรายการให้แก้', taggedEmpty.join('\n').includes('ยังไม่มีรายการให้แก้'));
+}
+
+// ---- ตารางเสริม (จำคน/จำบริบท) พังแล้วต้องไม่ทำให้ฟีเจอร์หลักตอบไม่ได้ ----
+// เจอจริง 1 ก.ย.: จุดเล็ก ๆ ที่รันก่อนถึงจุดแยกโหมดพังแล้วบอทตอบ "มีปัญหาชั่วคราว" ทุกข้อความ
+// ทั้งรูปทั้งตัวหนังสือ ทั้งที่ไม่ได้เกี่ยวกับเรื่องที่คุยเลย — ของเสริมต้องพังแบบเงียบ ๆ ไม่ลากฟีเจอร์หลักลงไปด้วย
+console.log('\n--- ตารางเสริมพังไม่ทำให้ฟีเจอร์หลักพังตาม ---');
+{
+  CURRENT_NAME = 'Peach';
+  geminiReply = { is_workout: true, activity: 'วิ่ง', duration_min: 30, kcal: 300, has_screen_data: false };
+
+  breakTable = 'chat_scratch';
+  const stillChecksIn = await send(textEvent('U_PEACH', 'วิ่ง 5 กม.'));
+  show('chat_scratch พัง (จำลอง) แล้ว Peach เช็คอิน "วิ่ง 5 กม."', stillChecksIn);
+  check('ฟีเจอร์หลัก (เช็คอิน) ยังทำงานได้ปกติ', stillChecksIn.some((t) => t.includes('วิ่ง')));
+  check('ไม่หลุดไปตอบข้อความ error ทั่วไป', !stillChecksIn.some((t) => t.includes('มีปัญหาชั่วคราว')));
+  breakTable = null;
+
+  // ตั้งใจพังแค่ query เฉพาะของ rememberPerson (การ "จำ") ไม่ใช่ทั้งตาราง —
+  // usersInChat ก็ query ตาราง chat_people เหมือนกัน แต่เป็นการ "อ่าน" ที่จำเป็นต่อการกันข้อมูลรั่วข้ามห้อง
+  // พังจุดนั้นแล้วเงียบไปเลยจะย้อนกลับไปเป็นบั๊กรั่วข้อมูลแบบเดิม จึงไม่ควร (และไม่ได้) ทนแบบเดียวกัน
+  breakTable = 'SELECT display_name FROM chat_people';
+  CURRENT_NAME = 'Milk';
+  const stillSummarizes = await send(dmEvent('U_DM', 'สรุป'));
+  show('rememberPerson พัง (จำลอง) แล้ว Milk พิมพ์ "สรุป"', stillSummarizes);
+  check('ฟีเจอร์หลัก (สรุปแคล) ยังทำงานได้ปกติ', stillSummarizes.some((t) => t.includes('Milk')));
+  check('ไม่หลุดไปตอบข้อความ error ทั่วไป', !stillSummarizes.some((t) => t.includes('มีปัญหาชั่วคราว')));
+  breakTable = null;
 }
 
 // ---- กลุ่มที่สอง ไว้พิสูจน์ว่าลิงก์ของแต่ละกลุ่มเห็นแค่ของตัวเอง ----

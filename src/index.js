@@ -164,9 +164,16 @@ async function rememberChatTarget(env, source) {
   const id = source.groupId || source.roomId || source.userId;
   const type = source.type; // 'group' | 'room' | 'user'
   if (!id) return;
-  await env.DB.prepare(
-    "INSERT OR IGNORE INTO chat_targets (id, type) VALUES (?, ?)"
-  ).bind(id, type).run();
+  // แค่บันทึกไว้ให้ cron ทวง 22:00 หาเจอ — ไม่ใช่ของที่ต้องมีก่อนถึงจะตอบข้อความนี้ได้
+  // พังแล้วต้องไม่ทำให้ทั้งข้อความตอบไม่ได้ (เจอจริง 1 ก.ย.: บั๊กจุดเล็ก ๆ ก่อนถึงจุดแยกโหมด
+  // ทำให้บอทตอบ "มีปัญหาชั่วคราว" ทุกข้อความ ทั้งที่ตัวฟีเจอร์หลักไม่ได้เกี่ยวอะไรด้วยเลย)
+  try {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO chat_targets (id, type) VALUES (?, ?)"
+    ).bind(id, type).run();
+  } catch (e) {
+    console.error("rememberChatTarget failed", e.message);
+  }
 }
 
 // ---------------------------------------------------------------- text commands
@@ -1042,26 +1049,33 @@ async function ensureChatPeople(env) {
   chatPeopleReady = true;
 }
 
+// แค่จำไว้ใช้กรองสิทธิ์ตอนตอบทีหลัง — พังแล้วต้องไม่ทำให้ตอบข้อความปัจจุบันไม่ได้
+// (เจอจริง 1 ก.ย.: จุดเล็ก ๆ ตรงนี้พังแล้วบอทตอบ "มีปัญหาชั่วคราว" ทุกข้อความทั้งรูปทั้งตัวหนังสือ
+//  ทั้งที่ไม่เกี่ยวกับเรื่องที่คุยเลย เพราะมันรันก่อนถึงจุดแยกโหมด/แยกฟีเจอร์เสมอ)
 async function rememberPerson(env, chatId, userId, source) {
-  await ensureChatPeople(env);
-  const seen = await env.DB.prepare(
-    `SELECT display_name FROM chat_people WHERE chat_id = ? AND line_user_id = ?`
-  ).bind(chatId, userId).first();
+  try {
+    await ensureChatPeople(env);
+    const seen = await env.DB.prepare(
+      `SELECT display_name FROM chat_people WHERE chat_id = ? AND line_user_id = ?`
+    ).bind(chatId, userId).first();
 
-  if (seen?.display_name) {
-    return env.DB.prepare(
-      `UPDATE chat_people SET last_seen = datetime('now') WHERE chat_id = ? AND line_user_id = ?`
-    ).bind(chatId, userId).run();
+    if (seen?.display_name) {
+      return await env.DB.prepare(
+        `UPDATE chat_people SET last_seen = datetime('now') WHERE chat_id = ? AND line_user_id = ?`
+      ).bind(chatId, userId).run();
+    }
+
+    // ยังไม่รู้ชื่อ — ถาม LINE ครั้งเดียวตอนเห็นคนนี้ครั้งแรกในห้อง (ไม่กินโควตา push)
+    const name = source ? await fetchDisplayName(env, source, null) : null;
+    await env.DB.prepare(
+      `INSERT INTO chat_people (chat_id, line_user_id, display_name, last_seen)
+       VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(chat_id, line_user_id) DO UPDATE SET last_seen = datetime('now'),
+         display_name = COALESCE(excluded.display_name, chat_people.display_name)`
+    ).bind(chatId, userId, name).run();
+  } catch (e) {
+    console.error("rememberPerson failed", e.message);
   }
-
-  // ยังไม่รู้ชื่อ — ถาม LINE ครั้งเดียวตอนเห็นคนนี้ครั้งแรกในห้อง (ไม่กินโควตา push)
-  const name = source ? await fetchDisplayName(env, source, null) : null;
-  await env.DB.prepare(
-    `INSERT INTO chat_people (chat_id, line_user_id, display_name, last_seen)
-     VALUES (?, ?, ?, datetime('now'))
-     ON CONFLICT(chat_id, line_user_id) DO UPDATE SET last_seen = datetime('now'),
-       display_name = COALESCE(excluded.display_name, chat_people.display_name)`
-  ).bind(chatId, userId, name).run();
 }
 
 // เฉพาะคนที่เคยคุยในห้องนี้ ใช้ตอบทุกอย่างที่ส่งกลับเข้าแชท
@@ -1108,23 +1122,28 @@ async function ensureChatScratch(env) {
 const SCRATCH_WINDOW_MIN = 10;
 const SCRATCH_KEEP = 5;
 
+// บริบทเสริมเท่านั้น — พังแล้วต้องไม่ทำให้เช็คอิน/ตอบข้อความปัจจุบันพังตามไปด้วย
 async function rememberScratch(env, chatId, userId, text) {
   const t = String(text || "").trim();
   if (!t || t.length > 200) return; // ยาวเกินไม่ใช่ข้อความสั้น ๆ เล่ารายละเอียดทีละท่อนแบบที่ฟีเจอร์นี้เล็ง
-  await ensureChatScratch(env);
-  await env.DB.prepare(
-    `INSERT INTO chat_scratch (chat_id, line_user_id, text) VALUES (?, ?, ?)`
-  ).bind(chatId, userId, t).run();
-  // เก็บสั้น ๆ พอ — ไม่ใช่ที่เก็บประวัติแชท ล้างของเก่า/เกินโควตาทุกครั้งที่มีของใหม่เข้า
-  await env.DB.prepare(
-    `DELETE FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?
-       AND (julianday('now') - julianday(created_at)) * 1440 > ?`
-  ).bind(chatId, userId, SCRATCH_WINDOW_MIN).run();
-  await env.DB.prepare(
-    `DELETE FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?
-       AND id NOT IN (SELECT id FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?
-                        ORDER BY id DESC LIMIT ?)`
-  ).bind(chatId, userId, chatId, userId, SCRATCH_KEEP).run();
+  try {
+    await ensureChatScratch(env);
+    await env.DB.prepare(
+      `INSERT INTO chat_scratch (chat_id, line_user_id, text) VALUES (?, ?, ?)`
+    ).bind(chatId, userId, t).run();
+    // เก็บสั้น ๆ พอ — ไม่ใช่ที่เก็บประวัติแชท ล้างของเก่า/เกินโควตาทุกครั้งที่มีของใหม่เข้า
+    await env.DB.prepare(
+      `DELETE FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?
+         AND (julianday('now') - julianday(created_at)) * 1440 > ?`
+    ).bind(chatId, userId, SCRATCH_WINDOW_MIN).run();
+    await env.DB.prepare(
+      `DELETE FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?
+         AND id NOT IN (SELECT id FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?
+                          ORDER BY id DESC LIMIT ?)`
+    ).bind(chatId, userId, chatId, userId, SCRATCH_KEEP).run();
+  } catch (e) {
+    console.error("rememberScratch failed", e.message);
+  }
 }
 
 async function recentScratch(env, chatId, userId) {
@@ -1139,9 +1158,13 @@ async function recentScratch(env, chatId, userId) {
 
 // เคลียร์ทิ้งทันทีที่เอาไปใช้บันทึกสำเร็จแล้ว กันเอาบริบทเก่ามาปนกับรอบถัดไป
 async function clearScratch(env, chatId, userId) {
-  await ensureChatScratch(env);
-  await env.DB.prepare(`DELETE FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?`)
-    .bind(chatId, userId).run();
+  try {
+    await ensureChatScratch(env);
+    await env.DB.prepare(`DELETE FROM chat_scratch WHERE chat_id = ? AND line_user_id = ?`)
+      .bind(chatId, userId).run();
+  } catch (e) {
+    console.error("clearScratch failed", e.message);
+  }
 }
 
 async function getDayTotals(env, userId, date) {
