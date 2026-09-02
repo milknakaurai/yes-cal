@@ -160,6 +160,8 @@ const imageEvent = (userId) => ({
   message: { type: 'image', id: 'm' + (++msgSeq) },
 });
 const show = (label, out) => { console.log(`\n▶ ${label}`); out.forEach(t => console.log('  ' + t.replace(/\n/g, '\n  '))); if (!out.length) console.log('  (บอทเงียบ)'); };
+// เทสยิง "ซิงก์" ซ้ำ ๆ ติดกันแบบไม่มีเวลาผ่านจริง — ล้างคูลดาวน์ก่อนแต่ละครั้งที่ตั้งใจให้ซิงก์ใหม่จริง ๆ
+const clearSyncCooldown = (userId) => db.prepare(`DELETE FROM app_meta WHERE key = ?`).run(`sync_last:${userId}`);
 
 // ================= เริ่มทดสอบ =================
 CURRENT_NAME = 'Milk';
@@ -743,6 +745,7 @@ console.log('\n--- เช็คอินอัตโนมัติจากน�
   // แทนที่จะสร้างแถวใหม่ (ถูกต้องตามตรรกะ แต่ทำให้เทสข้อนี้วัดอะไรไม่ได้)
   db.prepare(`DELETE FROM workouts WHERE line_user_id='U_PEACH'`).run();
   const before = db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE source='device'`).get().n;
+  clearSyncCooldown('U_PEACH');
   show('Peach พิมพ์ "ซิงก์"', await send(textEvent('U_PEACH', 'ซิงก์')));
   const rows = db.prepare(
     `SELECT activity, duration_min, kcal, logged_date, message_id FROM workouts
@@ -766,6 +769,7 @@ console.log('\n--- เช็คอินอัตโนมัติจากน�
     db.prepare(`INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, message_id, logged_date)
                 VALUES ('G1','U_PEACH',?,?,500,'image','m-photo-1',?)`)
       .run(w.activity, w.duration_min + 2, w.date);   // รูปเดียวกัน อ่านเวลาต่างกัน 2 นาที
+    clearSyncCooldown('U_PEACH');
     await send(textEvent('U_PEACH', 'ซิงก์'));
     const rows2 = db.prepare(
       `SELECT source, message_id, device_id, duration_min, activity FROM workouts
@@ -775,6 +779,7 @@ console.log('\n--- เช็คอินอัตโนมัติจากน�
     check('ยังคง message_id ของรูปไว้ (reply แก้วันที่ยังใช้ได้)',
       rows2[0]?.message_id === 'm-photo-1' && String(rows2[0]?.device_id).startsWith('whoop:'));
     check('ทับด้วยตัวเลขนาฬิกาแล้วก็ยังติดสัญลักษณ์ไว้เหมือนกัน', String(rows2[0]?.activity).startsWith('⌚ '));
+    clearSyncCooldown('U_PEACH');
     await send(textEvent('U_PEACH', 'ซิงก์'));
     check('ซิงก์ซ้ำหลังทับแล้ว ไม่เพิ่มแถว',
       db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_PEACH' AND logged_date=?`).get(w.date).n === 1);
@@ -784,12 +789,14 @@ console.log('\n--- เช็คอินอัตโนมัติจากน�
     db.prepare(`INSERT INTO workouts (chat_id, line_user_id, activity, duration_min, kcal, source, message_id, logged_date)
                 VALUES ('G1','U_PEACH','ว่ายน้ำ',?,400,'image','m-photo-2',?)`)
       .run(w.duration_min + 3, w.date);
+    clearSyncCooldown('U_PEACH');
     await send(textEvent('U_PEACH', 'ซิงก์'));
     check('คนละกิจกรรม เวลาใกล้กัน ยังนับแยก',
       db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_PEACH' AND logged_date=?`).get(w.date).n === 2);
   }
 
   // สั่งซ้ำต้องไม่บันทึกซ้ำ
+  clearSyncCooldown('U_PEACH');
   await send(textEvent('U_PEACH', 'ซิงก์'));
   const after = db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE source='device'`).get().n;
   check('สั่งซิงก์ซ้ำไม่บันทึกซ้ำ', after === rows.length);
@@ -805,6 +812,62 @@ console.log('\n--- เช็คอินอัตโนมัติจากน�
   await worker.scheduled({ cron: '0 */3 * * *' }, env, ctx);
   await settle();
   check('cron ซิงก์ไม่ push ทวงกลุ่ม', replies.length === 0);
+}
+
+// ---- "ซิงก์" ต้องซิงก์เฉพาะคนที่พิมพ์ ไม่ใช่ทุกคนในระบบ ----
+// เจ้าของเช็คบัญชี Cloudflare เจอเองว่า replySync() เรียก syncWearableCheckins(env) แบบไม่กรอง user
+// เท่ากับพิมพ์ "ซิงก์" คนเดียวไปกวาดซิงก์ให้ทุกคนที่เชื่อมนาฬิกาไว้ทั้งระบบเหมือน cron ทุกครั้ง
+// ยิ่งมีคนเชื่อมเยอะยิ่งช้าและยิง D1/API ของผู้ให้บริการเปลืองขึ้นเรื่อย ๆ โดยไม่จำเป็น
+console.log('\n--- "ซิงก์" ต้องซิงก์เฉพาะคนที่พิมพ์ ----');
+{
+  const connectWhoop = async (groupId, userId) => {
+    const token = (await send(textEventIn(groupId, userId, 'เชื่อมนาฬิกา')))[0].match(/connect\?t=([a-f0-9]+)/)[1];
+    const st = new URL((await worker.fetch(new Request(`https://x/oauth/whoop/start?t=${token}`), env, ctx))
+      .headers.get('location')).searchParams.get('state');
+    await worker.fetch(new Request(`https://x/oauth/whoop/callback?code=C_${userId}&state=${st}`), env, ctx);
+  };
+
+  CURRENT_NAME = 'Aon';
+  await send(textEventIn('G_SYNC', 'U_AON', 'ออกกำลังกาย'));
+  await send(textEventIn('G_SYNC', 'U_AON', 'เข้าร่วม'));
+  await connectWhoop('G_SYNC', 'U_AON');
+
+  // Beam อยู่คนละกลุ่ม — fixture ของ whoop ที่ mock ไว้คืนค่าเดิมให้ทุกคน (external_id ซ้ำกัน)
+  // ถ้าอยู่กลุ่มเดียวกับ Aon ตัวกันซ้ำ (คีย์ chat_id+device_id) จะดันไปกันการซิงก์ของ Beam ด้วย
+  // ทั้งที่ในชีวิตจริง external_id ของแต่ละคนไม่มีทางซ้ำกันอยู่แล้ว — แยกกลุ่มกันเพื่อเลี่ยง artifact ของเทส
+  CURRENT_NAME = 'Beam';
+  await send(textEventIn('G_SYNC2', 'U_BEAM', 'ออกกำลังกาย'));
+  await send(textEventIn('G_SYNC2', 'U_BEAM', 'เข้าร่วม'));
+  await connectWhoop('G_SYNC2', 'U_BEAM');
+
+  db.prepare(`DELETE FROM workouts WHERE line_user_id IN ('U_AON','U_BEAM')`).run();
+
+  CURRENT_NAME = 'Aon';
+  show('Aon พิมพ์ "ซิงก์" (Beam ก็เชื่อมนาฬิกาไว้เหมือนกัน)', await send(textEventIn('G_SYNC', 'U_AON', 'ซิงก์')));
+  const aonRows = db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_AON' AND source='device'`).get().n;
+  const beamRows = db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_BEAM' AND source='device'`).get().n;
+  check('Aon ซิงก์ของตัวเองสำเร็จ', aonRows > 0);
+  check('ไม่ไปซิงก์ให้ Beam ด้วย (คนละคนพิมพ์)', beamRows === 0);
+
+  // แต่ cron (ไม่ระบุคน) ยังต้องซิงก์ให้ทุกคนตามปกติ ไม่ใช่ถูกจำกัดไปด้วย
+  await worker.scheduled({ cron: '0 */3 * * *' }, env, ctx);
+  await settle();
+  const beamAfterCron = db.prepare(`SELECT COUNT(*) AS n FROM workouts WHERE line_user_id='U_BEAM' AND source='device'`).get().n;
+  check('cron (ไม่ระบุคน) ยังซิงก์ให้ทุกคนตามเดิม', beamAfterCron > 0);
+
+  // กันกดรัว ๆ — ซิงก์ซ้ำทันทีไม่ควรวิ่งเข้าไปซิงก์ใหม่ ให้ตอบคูลดาวน์แทน
+  const again = await send(textEventIn('G_SYNC', 'U_AON', 'ซิงก์'));
+  show('Aon กด "ซิงก์" ซ้ำทันที', again);
+  check('มีข้อความตอบกลับเสมอ ไม่เงียบใส่', again.length > 0);
+  check('บอกว่าเพิ่งซิงก์ไป ให้รอสักครู่', again.join('\n').includes('เพิ่งซิงก์ไป'));
+
+  // Beam ยังไม่โดนคูลดาวน์ตาม Aon (คนละคนกัน)
+  clearSyncCooldown('U_AON'); // เคลียร์ทิ้งกันตกค้างไปกระทบเทสถัดไป
+  CURRENT_NAME = 'Beam';
+  const beamTurn = await send(textEventIn('G_SYNC2', 'U_BEAM', 'ซิงก์'));
+  show('Beam พิมพ์ "ซิงก์" เอง (ไม่ควรโดนคูลดาวน์ของ Aon)', beamTurn);
+  check('คูลดาวน์แยกเป็นรายคน ไม่ปนกัน', !beamTurn.join('\n').includes('เพิ่งซิงก์ไป'));
+  clearSyncCooldown('U_BEAM');
 }
 
 // ---- การนอน + recovery ----
@@ -960,10 +1023,12 @@ check('ได้สรุปแบบเดียวกับคำสั่ง 
 // ข้อความหลังซิงก์ต้องไม่ชี้ให้พิมพ์ "วันนี้" ในกลุ่มที่ไม่ใช่โหมดชาเลนจ์
 {
   db.prepare(`DELETE FROM workouts WHERE line_user_id='U_PEACH'`).run();
+  clearSyncCooldown('U_PEACH');
   const inCal = await send(dmEvent('U_PEACH', 'ซิงก์'));
   show('Peach สั่ง "ซิงก์" จากแชทโหมดแคลอรี่', inCal);
   check('บอกว่ารายการไปลงกลุ่มชาเลนจ์', inCal[0].includes('กลุ่มชาเลนจ์ของคุณ'));
   db.prepare(`DELETE FROM workouts WHERE line_user_id='U_PEACH'`).run();
+  clearSyncCooldown('U_PEACH');
   const inChal = await send(textEvent('U_PEACH', 'ซิงก์'));
   check('ในกลุ่มชาเลนจ์ยังบอกให้พิมพ์ "วันนี้" ตรงนั้น',
     inChal[0].includes('พิมพ์ "วันนี้" เพื่อดูผล'));

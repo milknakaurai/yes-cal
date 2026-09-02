@@ -1224,10 +1224,14 @@ async function getDayTotals(env, userId, date) {
 //
 // กันบันทึกซ้ำด้วยการเก็บ id ของผู้ให้บริการไว้ในคอลัมน์ message_id (มี index อยู่แล้ว)
 // รูปแบบ "whoop:<uuid>" — ไม่ชนกับ message id ของ LINE และไม่ต้องเพิ่มคอลัมน์ใหม่
-async function syncWearableCheckins(env) {
+// lineUserId ระบุ = ซิงก์เฉพาะคนนั้น (ใช้ตอนพิมพ์ "ซิงก์" เอง) · ไม่ระบุ = ทุกคน (ใช้เฉพาะ cron)
+// เดิมพิมพ์ "ซิงก์" คนเดียวไปกวาดซิงก์ให้ทุกคนในระบบทั้งหมดเหมือน cron ทุกครั้ง
+// ยิ่งมีคนเชื่อมนาฬิกาเยอะขึ้นยิ่งช้าและยิง D1/API ของผู้ให้บริการเปลืองขึ้นเรื่อย ๆ โดยไม่จำเป็น
+async function syncWearableCheckins(env, { lineUserId } = {}) {
   await W.ensureWearableTables(env);
-  const links = (await env.DB.prepare(
-    `SELECT line_user_id, provider FROM device_links`
+  const links = (await (lineUserId
+    ? env.DB.prepare(`SELECT line_user_id, provider FROM device_links WHERE line_user_id = ?`).bind(lineUserId)
+    : env.DB.prepare(`SELECT line_user_id, provider FROM device_links`)
   ).all().catch(() => ({ results: [] }))).results;
 
   let added = 0;
@@ -1298,8 +1302,23 @@ async function syncWearableCheckins(env) {
 // สั่งซิงก์เองได้ ไม่ต้องรอ cron — ไว้ทดสอบและไว้ใช้ตอนเพิ่งออกกำลังกายเสร็จ
 // รายการที่ซิงก์ได้จะไปลงเฉพาะ "กลุ่มชาเลนจ์" ที่คนคนนั้นเป็นสมาชิก
 // ถ้าสั่งจากกลุ่มแคลอรี่ อย่าบอกให้พิมพ์ "วันนี้" ที่นี่ — เป็นคำสั่งของอีกโหมด รายการก็ไม่ได้อยู่ที่นี่
-async function replySync(env, event, chatId) {
-  const added = await syncWearableCheckins(env);
+// เฉพาะของคนที่พิมพ์เท่านั้น (ไม่ใช่กวาดซิงก์ทุกคนแบบ cron) + กันกดรัว ๆ ด้วยคูลดาวน์สั้น ๆ
+const SYNC_COOLDOWN_SEC = 30;
+async function replySync(env, event, chatId, userId) {
+  await W.ensureWearableTables(env);
+  const cooldownKey = `sync_last:${userId}`;
+  const last = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(cooldownKey).first();
+  const secsAgo = last?.value ? (Date.now() - Number(last.value)) / 1000 : Infinity;
+  if (secsAgo < SYNC_COOLDOWN_SEC) {
+    return lineReply(env, event.replyToken,
+      `เพิ่งซิงก์ไปเมื่อกี้ครับ รออีก ${Math.ceil(SYNC_COOLDOWN_SEC - secsAgo)} วินาทีแล้วลองใหม่นะ ⌚`);
+  }
+  await env.DB.prepare(
+    `INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+  ).bind(cooldownKey, String(Date.now())).run();
+
+  const added = await syncWearableCheckins(env, { lineUserId: userId });
   if (!added) {
     return lineReply(env, event.replyToken,
       "ซิงก์แล้วครับ ยังไม่มีรายการใหม่จากนาฬิกา ⌚\n(ลองซิงก์แอปนาฬิกาในมือถือก่อน แล้วสั่งใหม่อีกที)");
@@ -1648,7 +1667,7 @@ async function handleWearableCommand(env, event, userId, chatId, text) {
     return { handled: true, promise: replyDisconnect(env, event, userId, chatId, false) };
   }
   if (/^(ซิงก์|ซิ้งค์|sync|ดึงข้อมูลนาฬิกา)$/i.test(text)) {
-    return { handled: true, promise: replySync(env, event, chatId) };
+    return { handled: true, promise: replySync(env, event, chatId, userId) };
   }
   if (/^(นอน|การนอน|เมื่อคืนนอน|sleep|recovery|readiness)$/i.test(text)) {
     return { handled: true, promise: replySleep(env, event, chatId, userId) };
