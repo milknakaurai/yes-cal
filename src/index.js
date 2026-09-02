@@ -110,11 +110,45 @@ async function handleEvents(events, env) {
       await handleEvent(event, env);
     } catch (err) {
       console.error("event error", err.stack || err.message);
+      await logError(env, "handleEvent", err, {
+        chatId: event?.source?.groupId || event?.source?.roomId || event?.source?.userId,
+        userId: event?.source?.userId,
+      });
       if (event.replyToken) {
         await lineReply(env, event.replyToken, "ขอโทษครับ มีปัญหาชั่วคราว ลองใหม่อีกทีนะ 🙏").catch(() => {});
       }
     }
   }
+}
+
+// เก็บ error จริงไว้ใน D1 — console.error ของ Cloudflare หายไปเลยถ้าไม่มีใคร tail อยู่ตอนนั้นพอดี
+// (เจอจริง 1 ก.ย.: มีปัญหาแล้วย้อนไปดูสาเหตุจริงจาก log ไม่ได้เลย ต้องเดาจากข้อมูลอ้อม ๆ ใน D1 แทน)
+// ตารางนี้เป็นของเสริมเหมือนกัน ห่อ try/catch กันเอง ห้ามพังแล้วลากอะไรลงไปด้วย
+let errorLogReady = false;
+async function ensureErrorLog(env) {
+  if (errorLogReady) return;
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS error_log (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       where_ TEXT, message TEXT, stack TEXT,
+       chat_id TEXT, line_user_id TEXT,
+       created_at TEXT DEFAULT (datetime('now')))`
+  ).run();
+  errorLogReady = true;
+}
+
+async function logError(env, where, err, ctx = {}) {
+  try {
+    await ensureErrorLog(env);
+    await env.DB.prepare(
+      `INSERT INTO error_log (where_, message, stack, chat_id, line_user_id) VALUES (?, ?, ?, ?, ?)`
+    ).bind(where, String(err?.message || err).slice(0, 500), String(err?.stack || "").slice(0, 2000),
+      ctx.chatId || null, ctx.userId || null).run();
+    // เก็บสั้น ๆ พอ ไม่ใช่ระบบ observability เต็มรูปแบบ — ล้างของเก่ากว่า 14 วันทุกครั้งที่มีของใหม่เข้า
+    await env.DB.prepare(
+      `DELETE FROM error_log WHERE (julianday('now') - julianday(created_at)) > 14`
+    ).run();
+  } catch { /* ของเสริม พังแล้วต้องไม่ลากอะไรลงไปด้วย */ }
 }
 
 async function handleEvent(event, env) {
@@ -173,6 +207,7 @@ async function rememberChatTarget(env, source) {
     ).bind(id, type).run();
   } catch (e) {
     console.error("rememberChatTarget failed", e.message);
+    await logError(env, "rememberChatTarget", e, { chatId: id, userId: source.userId });
   }
 }
 
@@ -1075,6 +1110,7 @@ async function rememberPerson(env, chatId, userId, source) {
     ).bind(chatId, userId, name).run();
   } catch (e) {
     console.error("rememberPerson failed", e.message);
+    await logError(env, "rememberPerson", e, { chatId, userId });
   }
 }
 
@@ -1143,6 +1179,7 @@ async function rememberScratch(env, chatId, userId, text) {
     ).bind(chatId, userId, chatId, userId, SCRATCH_KEEP).run();
   } catch (e) {
     console.error("rememberScratch failed", e.message);
+    await logError(env, "rememberScratch", e, { chatId, userId });
   }
 }
 
@@ -1164,6 +1201,7 @@ async function clearScratch(env, chatId, userId) {
       .bind(chatId, userId).run();
   } catch (e) {
     console.error("clearScratch failed", e.message);
+    await logError(env, "clearScratch", e, { chatId, userId });
   }
 }
 
@@ -1694,6 +1732,15 @@ async function handleApi(url, request, env) {
       ).bind(lastNDates(7)[0]).all()).results;
     } catch (e) {
       report.usage_7d = "error: " + e.message;
+    }
+    // error จริงล่าสุด — เช็คตรงนี้ก่อนเลยเวลาเจ้าของบอกว่า "บอทไม่ทำงาน" ไม่ต้องเดาจากข้อมูลอ้อม ๆ
+    try {
+      report.recent_errors = (await env.DB.prepare(
+        `SELECT where_, message, chat_id, line_user_id, created_at FROM error_log
+          ORDER BY id DESC LIMIT 20`
+      ).all()).results;
+    } catch {
+      report.recent_errors = "ยังไม่มีตาราง error_log (ยังไม่เคยมี error เกิดขึ้นหลังอัปเดตนี้)";
     }
     return jsonResponse(report);
   }

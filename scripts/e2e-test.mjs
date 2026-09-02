@@ -558,6 +558,8 @@ console.log('\n--- ตารางเสริมพังไม่ทำให�
   show('chat_scratch พัง (จำลอง) แล้ว Peach เช็คอิน "วิ่ง 5 กม."', stillChecksIn);
   check('ฟีเจอร์หลัก (เช็คอิน) ยังทำงานได้ปกติ', stillChecksIn.some((t) => t.includes('วิ่ง')));
   check('ไม่หลุดไปตอบข้อความ error ทั่วไป', !stillChecksIn.some((t) => t.includes('มีปัญหาชั่วคราว')));
+  check('แต่ error จริงถูกเก็บไว้ใน error_log ให้ตามดูได้ทีหลัง',
+    db.prepare(`SELECT COUNT(*) AS n FROM error_log WHERE where_='rememberScratch'`).get().n > 0);
   breakTable = null;
 
   // ตั้งใจพังแค่ query เฉพาะของ rememberPerson (การ "จำ") ไม่ใช่ทั้งตาราง —
